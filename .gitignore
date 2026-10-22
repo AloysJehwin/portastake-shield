@@ -1,0 +1,38 @@
+# Node
+node_modules/
+dist/
+build/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Foundry
+out/
+cache/
+broadcast/
+.deps/
+lib/
+
+# TS
+*.tsbuildinfo
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Keys / secrets
+*.pem
+*.key
+secrets/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
