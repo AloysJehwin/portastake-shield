@@ -4,8 +4,36 @@
 
 Built for [Portaldot Hacker House 2026](https://dorahacks.io/hackathon/portaldot-hacker-house-2026) — Ecosystem DApps track.
 
-Under the hood: a liquid-staking token for Portaldot V3 with built-in slashing insurance.
-On the surface: deposit USDC, watch it grow at ~8% APY, withdraw anytime, your balance never dips when a validator misbehaves.
+Under the hood: a liquid-staking token for Portaldot V3 with built-in slashing insurance and a reserve-backed 8% yield target.
+On the surface: deposit stablecoins, earn 8% a year (in POT), automate savings and bill payments, withdraw anytime. A misbehaving validator never dents your balance.
+
+---
+
+## Status
+
+| Piece | State |
+|---|---|
+| Smart contracts (`contracts/`) | ✅ 10 contracts built; 48 tests pass (unit, fuzz, and an invariant run of ~8,200 random actions) |
+| Deploy script | ✅ Verified on a local chain and in a no-broadcast simulation against the live V3 RPC |
+| Testnet deployment | ⏳ Waiting on tPOT. Measured revive storage deposits total ~3,300 tPOT ([details](docs/ARCHITECTURE.md#chain-facts-verified-on-portaldotv3-testnet-oct-2026)) |
+| Relayer (`relayer/`) | 🚧 Chain probe done; staking bridge + keeper next |
+| Frontend (`frontend/`) | 🚧 Not started |
+
+## Quickstart
+
+```sh
+git clone --recurse-submodules https://github.com/AloysJehwin/portastake-shield.git
+cd portastake-shield/contracts
+forge build
+forge test
+
+# Deploy to PortaldotV3 testnet (needs a funded EVM key in contracts/.env)
+source .env
+forge script script/Deploy.s.sol --rpc-url portaldot --broadcast --legacy --slow
+
+# Re-check the live chain facts the design depends on
+cd ../relayer && npm install && npm run probe
+```
 
 ---
 
@@ -41,16 +69,31 @@ Mobile-first, one screen, no crypto jargon in the main flow.
 │  $1,247.08                       +$47.08 YTD  │
 │  (328 stPOT)                                  │
 │                                               │
-│  Est. APY  8.4%    Insurance pool  healthy ✓  │
+│  Yield  8.0% target   Reserve  412 days ✓     │
+│  Insurance pool  healthy ✓                    │
 │                                               │
 │  [  Deposit  ]    [  Withdraw  ]              │
+│  [  Automate: save & pay  ]                   │
 │                                               │
 │  Why is this safe? ▸                          │
 │  Where does the yield come from? ▸            │
 └───────────────────────────────────────────────┘
 ```
 
-Tap Deposit, pay with USDC or USDT, the app routes the swap, bonds the POT, mints stPOT, hands the user a Policy NFT. Balance displayed in USD. The yield shown is already net of the insurance split — no mental math.
+Tap Deposit and pay with stablecoins. The app swaps them to POT, deposits into the vault, mints stPOT and hands the user a Policy NFT. The yield shown is already net of the insurance split, so there's no mental math.
+
+The 8% is in POT terms. The balance is displayed in USD, and the app says plainly that the USD value moves with the POT price. Insurance covers slashing, not price.
+
+### Automate it: debits
+
+Savings and payments run on their own, in both directions:
+
+| | Auto (recurring) | Scheduled (one-time) | Threshold |
+|---|---|---|---|
+| **Save** (wallet → savings) | "Save $20 every Friday" | "Save $500 on the 1st" | "Keep $500 in my wallet, save the rest" |
+| **Pay** (savings → anyone) | "Pay rent $300 monthly" | "Pay $100 on Dec 3" | "Never let my wallet drop below $100" |
+
+Each instruction has a per-run cap, optional run limit and expiry, and slippage protection. The owner can pause or cancel anytime, and an instruction that fails 3 times in a row pauses itself.
 
 ---
 
@@ -58,51 +101,58 @@ Tap Deposit, pay with USDC or USDT, the app routes the swap, bonds the POT, mint
 
 Four layers that cooperate so the user never meets any of them.
 
-### Layer 0 — On-ramp Router
+### Layer 0 — On-ramp (SwapDesk) and automation (MandateManager)
 
-The user holds stablecoins, not POT. In one tx, the Router:
+The user holds stablecoins, not POT. In one tx, `SwapDesk.depositWithStable`:
 
-1. Swaps USDC/USDT → POT (DEX on Portaldot V3 or stablecoin bridge).
-2. Calls `StakingVault.deposit(POT)` → mints stPOT.
-3. Mints a PolicyNFT to the user.
+1. Swaps tUSD → POT at the `PriceOracle` price. The relayer feeds that price from the native tPOT/pUSD `assetConversion` pool.
+2. Calls `StakingVault.deposit` → mints stPOT to the user.
+3. The vault mints a soulbound PolicyNFT on the user's first deposit.
 
-Withdraw reverses the flow: burn stPOT, draw from a 10% hot reserve for instant small withdrawals (or queue an unbond for large ones), swap POT → USDC, send to the user's wallet.
+Withdraw reverses the flow: `redeemToStable` burns stPOT and draws from the 10% hot reserve. It then swaps POT → tUSD and sends it to any address. Large exits queue an unbond instead (~168 days on testnet).
+
+Why a desk rather than a DEX: Portaldot's `pUSD` lives in `pallet-assets` and has no ERC-20 precompile on the EVM. The EVM side therefore uses a `tUSD` test token and an inventory desk until a DEX is reachable from Solidity.
+
+`MandateManager` drives the same two calls on a schedule, for the debits above. The EVM has no cron, so execution is permissionless and the relayer acts as keeper.
 
 ### Layer 1 — EVM contracts (money)
 
 Standard Solidity on Portaldot V3's `pallet-revive` EVM (Chain ID 420420777). No exotic primitives.
 
 ```
-                        ┌──────────────────────┐
-                        │    StakingVault      │  ERC-4626. Holds POT, mints stPOT.
-                        │    (ERC-4626)        │  Keeps a 10% hot reserve for instant withdraws.
-                        └──────────┬───────────┘
-                                   │
-          ┌────────────────────────┼────────────────────────┐
-          ▼                        ▼                        ▼
-   ┌───────────────┐        ┌──────────────┐        ┌──────────────┐
-   │  PolicyNFT    │        │     stPOT    │        │   Relayer    │
-   │  (ERC-721)    │        │  share token │        │   watches    │
-   └───────────────┘        └──────┬───────┘        └──────────────┘
-                                   │
-                 ┌─────────────────┼─────────────────┐
-                 ▼                 ▼                 ▼
-          ┌─────────────┐   ┌─────────────┐   ┌──────────────┐
-          │  MiniLend   │   │   veSTPOT   │   │ InsuranceFund│
-          │  collateral │   │ governance  │   │ pays slashing│
-          └─────────────┘   └──────┬──────┘   └──────────────┘
-                                   │
-                                   ▼
-                      validator allowlist · insurance split %
-                      · oracle committee set
+   ┌────────────────┐   ┌──────────────┐
+   │ MandateManager │──▶│   SwapDesk   │◀── PriceOracle (relayer-fed)
+   │ save/pay rules │   │ tUSD ⇄ POT   │
+   └────────────────┘   └──────┬───────┘
+                               ▼
+                    ┌──────────────────────┐        sweepToStake ──▶ relayer stash (Substrate)
+                    │    StakingVault      │◀────── notifyReward{R} ── relayer
+                    │  ERC-4626 → stPOT    │◀────── reportSlash ────── OracleCommittee (N-of-M)
+                    │  10% hot reserve     │
+                    └──┬────────┬───────┬──┘
+                       │        │       │  RateEngine splits each era's reward R
+                       ▼        ▼       ▼
+            ┌───────────┐ ┌──────────────┐ ┌──────────────────────┐
+            │ PolicyNFT │ │ InsuranceFund│ │ StabilizationReserve │
+            │ soulbound │ │ pays slashes │ │ tops up a short era  │
+            └───────────┘ └──────────────┘ └──────────────────────┘
 ```
 
-Every yield payment hits `StakingVault.notifyReward(amount)`. The vault splits it:
+**The 8% engine.** Once per era (6h) the relayer returns the staking reward `R` via `StakingVault.notifyReward`, and `RateEngine` splits it:
 
-- `X%` → `InsuranceFund` (second ERC-4626, pays out on slashing)
-- `(100-X)%` → stays in `StakingVault` → stPOT share price rises
+```
+owed = TVL × 8% × time since last reward
 
-`X` is a governance parameter. The split is the insurance product. The user never buys a policy — they're covered for as long as they hold stPOT.
+R ≥ owed:  owed → users (vests over one era)
+           half the surplus → InsuranceFund
+           the rest → StabilizationReserve (capped at 10% of TVL, overflow → treasury)
+R < owed:  the reserve tops users up to 8%
+           reserve empty → users get the real yield, RateDowngraded is emitted
+```
+
+Testnet staking currently pays ~25% gross. On 1,000 POT that's 80 POT/yr to users, 85 to insurance and 85 to the reserve. A full reserve covers the 8% for ~15 months of zero staking income.
+
+The user never buys a policy: they're covered for as long as they hold stPOT. The parameters (target rate, insurance share, reserve cap, hot-reserve size) are bounded admin settings, moving to a timelock and later to veSTPOT governance.
 
 ### Layer 2 — The relayer (bridge to Substrate)
 
@@ -185,18 +235,21 @@ Maria never touched Substrate. She never heard "slashing." She never typed "bond
 
 ## Components
 
-| Piece | What it is | Why it exists for Maria |
-|---|---|---|
-| **Router** | One-tx contract: stablecoin → POT → stPOT (+ mint PolicyNFT) | So she never touches POT or learns about staking |
-| **StakingVault** | ERC-4626, holds POT, mints stPOT, 10% hot reserve | Deposits earn yield; small withdraws are instant |
-| **stPOT** | ERC-20 share token issued by StakingVault | The liquid, composable, yield-bearing asset |
-| **InsuranceFund** | ERC-4626 funded by yield split, pays slashing claims | Her balance never dips when a validator misbehaves |
-| **PolicyNFT** | ERC-721 minted on deposit | Her coverage certificate |
-| **OracleCommittee** | N-of-M attester set with slashable bonds | Proves Substrate slashing events to EVM |
-| **Governance (veSTPOT)** | Time-locked stPOT, 24h parameter timelock | Community picks validators, sets insurance % |
-| **MiniLend** | stPOT-collateralized POT loan pool | Composability demo — stPOT works elsewhere |
-| **Relayer** | TypeScript daemon, SS58 key + EVM key | Translates Maria's clicks into Substrate extrinsics |
-| **Attester daemon** | Opt-in TS daemon, bonds stPOT, signs slashing events | Decentralizes the oracle |
+| Piece | What it is | Why it exists for Maria | State |
+|---|---|---|---|
+| **SwapDesk** | One-tx stablecoin → POT → stPOT and back, oracle-priced | She never touches POT or learns about staking | ✅ |
+| **StakingVault** | ERC-4626 over WPOT, mints stPOT, 10% hot reserve, reward streaming | Deposits earn yield; small withdrawals are instant | ✅ |
+| **RateEngine** | Library: the reserve-backed 8% split | A steady, predictable rate | ✅ |
+| **StabilizationReserve** | Pot of surplus yield, capped at 10% of TVL | Tops up eras that pay less than 8% | ✅ |
+| **InsuranceFund** | Pot funded by the yield split, pays slashing losses | A misbehaving validator never dents her balance | ✅ |
+| **MandateManager** | Auto / scheduled / threshold debits, save and pay | Savings and bills run themselves | ✅ |
+| **PolicyNFT** | Soulbound ERC-721 minted on first deposit | Her coverage certificate | ✅ |
+| **OracleCommittee** | N-of-M ECDSA attesters | Proves Substrate slashing events to the EVM | ✅ (bonding later) |
+| **PriceOracle**, **WPOT**, **tUSD** | Price feed, wrapped tPOT, test stablecoin | Plumbing for the above | ✅ |
+| **Relayer** | TypeScript daemon, SS58 key + EVM key | Bonds POT, reports rewards, feeds price, runs debits | 🚧 |
+| **Attester daemon** | Opt-in TS daemon, signs slashing events | Decentralizes the oracle | 🚧 |
+| **Governance (veSTPOT)** | Time-locked stPOT, 24h parameter timelock | Community picks validators, sets insurance % | Later |
+| **MiniLend** | stPOT-collateralized POT loan pool | Composability demo: stPOT works elsewhere | Later |
 
 ---
 
@@ -219,27 +272,42 @@ If this ships, three real things change:
 
 ---
 
-## Open items before writing the first contract
+## Open items (resolved by probing the testnet — `relayer/scripts/probe.mjs`)
 
-- **Which staking pallet is live on V3 testnet** (`staking`, `nominationPools`, or custom `laoNpos`)? Decides whether the vault bonds directly or joins a pool. Resolve via polkadot.js apps against `wss://test-node-v3.portaldot.dev`.
-- **Is `staking.Slashed` fired on testnet** at all? If not, the demo uses a documented simulated-slashing path; the architecture doesn't change for mainnet.
-- **Which stablecoin and DEX exist on Portaldot V3** for the USDC → POT swap? If none, Router stubs the swap with a mock oracle-priced swap for the demo.
-- **Token decimals** on Substrate side — read `system.properties.tokenDecimals` on relayer startup, write to a `DecimalsOracle` contract.
-- **Price feed** for USD display — trusted feed via the attester committee if no Chainlink is deployed.
-- **No public POT faucet** — testnet POT comes from Portaldot team via DoraHacks registration or Discord DM to `@titus242471`.
+- **Staking pallet**: both `staking` and `nominationPools` are live (no `laoNpos`). The vault's stash bonds directly.
+- **Slashing on testnet**: there are only 2 validators, so a real slash is unlikely. The demo drives the real `OracleCommittee` path with attester-signed test events.
+- **Stablecoin and DEX**: `pUSD` (asset 7777) and a Native/7777 `assetConversion` pool exist on the Substrate side, but there's no ERC-20 precompile. The EVM side uses `tUSD` plus an oracle-priced `SwapDesk`, and the relayer prices POT from the Native/7777 pool.
+- **Decimals**: 14 on Substrate, 18 on EVM (`nativeToEthRatio = 10000`). No `DecimalsOracle` needed.
+- **Yield**: ~25% gross staking APY funds the reserve-backed 8% target. See `docs/ARCHITECTURE.md`.
+- **Unbonding**: 672 eras ≈ 168 days, so instant withdrawals come from the hot reserve.
+- **Deploy cost**: revive accepts plain solc bytecode, but charges ~0.06 tPOT per byte of stored code. Measured with `reviveApi.uploadCode` dry-runs, the full suite needs ~3,300 tPOT in (refundable) storage deposits. That's well above the standard 500 tPOT hackathon allocation.
+- **Testnet POT** comes from the Portaldot team via a ticket in the Discord `#open-ticket` channel (native `5…` address + registration proof).
 
 ---
 
 ## Repo layout
 
 ```
-contracts/   Foundry project — Solidity contracts (Router, StakingVault, …)
-relayer/     TypeScript daemon — EVM ↔ Substrate bridge
-frontend/    React + wagmi/viem — Maria's savings app
-docs/        Architecture notes and decision records
+contracts/            Foundry project (solc 0.8.28, OpenZeppelin v5.4.0)
+  src/                StakingVault, RateEngine, SwapDesk, MandateManager, OracleCommittee, …
+  test/               unit, fuzz and invariant suites
+  script/Deploy.s.sol deploys + wires everything, writes deployments/<chainId>.json
+relayer/              TypeScript: EVM ↔ Substrate bridge and keeper
+  scripts/probe.mjs   read-only probe of the live V3 testnet
+frontend/             React + wagmi/viem: Maria's savings app
+docs/                 architecture, chain facts, 8% engine, debit engine
 ```
 
-See `docs/ARCHITECTURE.md` for the deeper design.
+See [`contracts/README.md`](contracts/README.md) for per-contract details and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the deeper design.
+
+## Network
+
+| | |
+|---|---|
+| EVM RPC | `https://test-evm-rpc-v3.portaldot.dev` (chain ID `420420777`) |
+| Substrate node | `wss://test-node-v3.portaldot.dev` |
+| Explorer | `https://node-console.portaldot.dev/` |
+| Token | tPOT (14 decimals on Substrate, 18 in the EVM) |
 
 ---
 
