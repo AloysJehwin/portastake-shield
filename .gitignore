@@ -13,7 +13,6 @@ out/
 cache/
 broadcast/
 .deps/
-lib/
 
 # TS
 *.tsbuildinfo
