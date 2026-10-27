@@ -1,0 +1,11 @@
+{
+  "name": "@portastake/relayer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "probe": "node scripts/probe.mjs"
+  },
+  "dependencies": {
+    "@polkadot/api": "^16.0.0"
+  }
+}
