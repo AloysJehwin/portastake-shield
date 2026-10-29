@@ -61,7 +61,7 @@ contract VaultHandler is Test {
 
     function reward(uint256 grossBps, uint256 dt) external checkPrice {
         dt = bound(dt, 1, 2 days);
-        vm.warp(block.timestamp + dt);
+        vm.warp(vm.getBlockTimestamp() + dt);
         grossBps = bound(grossBps, 0, 4_000);
         uint256 r = vault.bondedPrincipal() * grossBps * dt / (10_000 * 365 days);
         r -= r % 1e4;
@@ -80,7 +80,7 @@ contract VaultHandler is Test {
     }
 
     function warp(uint256 dt) external checkPrice {
-        vm.warp(block.timestamp + bound(dt, 1, 1 days));
+        vm.warp(vm.getBlockTimestamp() + bound(dt, 1, 1 days));
     }
 }
 

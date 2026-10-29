@@ -12,7 +12,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {WPOT} from "./WPOT.sol";
 import {RateEngine} from "./RateEngine.sol";
-import {IWpotBucket, IPolicyNFT, ISlashableVault} from "./interfaces/Interfaces.sol";
+import {IWpotBucket, ISlashableVault} from "./interfaces/Interfaces.sol";
 
 /// @title StakingVault (stPOT)
 /// @notice ERC-4626 vault over WPOT. Deposits mint stPOT; the relayer bonds swept POT on the
@@ -22,6 +22,9 @@ import {IWpotBucket, IPolicyNFT, ISlashableVault} from "./interfaces/Interfaces.
 ///
 /// Rewards are split by RateEngine (reserve-backed target rate) and the users' portion is streamed
 /// linearly over one era so a deposit just before a reward can't capture it.
+///
+/// The coverage certificate is a locked NFT in the native `Nfts` pallet, minted by the relayer
+/// from this vault's `Deposit` events, so it costs no EVM code.
 contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISlashableVault {
     using SafeERC20 for IERC20;
 
@@ -39,7 +42,6 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
     WPOT public immutable wpot;
     IWpotBucket public immutable insuranceFund;
     IWpotBucket public immutable reserve;
-    IPolicyNFT public immutable policy;
 
     address public treasury;
     /// @notice H160 of the relayer's mapped SS58 stash; swept POT lands in that Substrate account.
@@ -84,7 +86,13 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
     event UncoveredLoss(uint256 amount);
     event UnstakeRequested(uint256 indexed id, address indexed owner, address receiver, uint256 shares, uint256 assets);
     event UnstakeFulfilled(uint256 indexed id, address indexed receiver, uint256 assets);
-    event ParameterApplied(bytes32 indexed name, uint256 value);
+    event ParamsUpdated(
+        uint256 targetRateBps,
+        uint256 insuranceShareBps,
+        uint256 reserveCapBps,
+        uint256 targetHotBps,
+        uint256 maxAccrualWindow
+    );
     event AddressApplied(bytes32 indexed name, address value);
 
     error ZeroAmount();
@@ -103,7 +111,6 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
         WPOT wpot_,
         IWpotBucket insuranceFund_,
         IWpotBucket reserve_,
-        IPolicyNFT policy_,
         address admin,
         address treasury_,
         address stakingAccount_
@@ -114,7 +121,6 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
         wpot = wpot_;
         insuranceFund = insuranceFund_;
         reserve = reserve_;
-        policy = policy_;
         treasury = treasury_;
         stakingAccount = stakingAccount_;
         lastAccrual = uint64(block.timestamp);
@@ -166,11 +172,6 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
         return Math.min(super.maxRedeem(owner), convertToShares(availableLiquidity()));
     }
 
-    function _deposit(address caller, address receiver, uint256 assets, uint256 shares) internal override {
-        super._deposit(caller, receiver, assets, shares);
-        policy.mintFor(receiver, targetRateBps, insuranceShareBps);
-    }
-
     /// @notice Deposit native tPOT directly (wraps to WPOT).
     function depositNative(address receiver) external payable nonReentrant whenNotPaused returns (uint256 shares) {
         uint256 assets = msg.value;
@@ -179,7 +180,6 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
         wpot.deposit{value: assets}();
         _mint(receiver, shares);
         emit Deposit(msg.sender, receiver, assets, shares);
-        policy.mintFor(receiver, targetRateBps, insuranceShareBps);
     }
 
     // ---------------------------------------------------------------------
@@ -286,24 +286,6 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
     }
 
     // ---------------------------------------------------------------------
-    // Transparency views
-    // ---------------------------------------------------------------------
-
-    /// @notice Days the reserve alone could keep paying the target rate with zero staking reward.
-    function reserveCoverageDays() external view returns (uint256) {
-        uint256 ta = totalAssets();
-        if (ta == 0 || targetRateBps == 0) return 0;
-        return Math.mulDiv(wpot.balanceOf(address(reserve)), BPS * 365, ta * targetRateBps);
-    }
-
-    /// @notice Insurance fund size as a share of TVL, in bps.
-    function insuranceRatioBps() external view returns (uint256) {
-        uint256 ta = totalAssets();
-        if (ta == 0) return 0;
-        return Math.mulDiv(wpot.balanceOf(address(insuranceFund)), BPS, ta);
-    }
-
-    // ---------------------------------------------------------------------
     // Admin (held by a 24h TimelockController after bootstrap)
     // ---------------------------------------------------------------------
 
@@ -328,11 +310,7 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
         reserveCapBps = reserveCapBps_;
         targetHotBps = targetHotBps_;
         maxAccrualWindow = maxAccrualWindow_;
-        emit ParameterApplied("targetRateBps", targetRateBps_);
-        emit ParameterApplied("insuranceShareBps", insuranceShareBps_);
-        emit ParameterApplied("reserveCapBps", reserveCapBps_);
-        emit ParameterApplied("targetHotBps", targetHotBps_);
-        emit ParameterApplied("maxAccrualWindow", maxAccrualWindow_);
+        emit ParamsUpdated(targetRateBps_, insuranceShareBps_, reserveCapBps_, targetHotBps_, maxAccrualWindow_);
     }
 
     function setTreasury(address treasury_) external onlyRole(DEFAULT_ADMIN_ROLE) {

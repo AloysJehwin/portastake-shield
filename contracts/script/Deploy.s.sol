@@ -6,19 +6,16 @@ import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
 import {WPOT} from "../src/WPOT.sol";
 import {MockStable} from "../src/MockStable.sol";
-import {PriceOracle} from "../src/PriceOracle.sol";
 import {InsuranceFund, StabilizationReserve} from "../src/WpotBuckets.sol";
-import {PolicyNFT} from "../src/PolicyNFT.sol";
 import {StakingVault} from "../src/StakingVault.sol";
 import {SwapDesk} from "../src/SwapDesk.sol";
-import {MandateManager} from "../src/MandateManager.sol";
 import {OracleCommittee} from "../src/OracleCommittee.sol";
 
 /// @notice Deploys and wires the full PortaStake Shield contract set.
 ///
 /// Env:
 ///   PRIVATE_KEY      deployer key (required)
-///   RELAYER          relayer EVM address           (default: deployer)
+///   RELAYER          relayer EVM address: vault relayer, price feeder, auto-save keeper (default: deployer)
 ///   STAKING_ACCOUNT  H160 of the relayer's mapped SS58 stash, receives swept POT (default: RELAYER)
 ///   TREASURY         overflow yield sink           (default: deployer)
 ///   ATTESTER         first OracleCommittee member  (default: deployer; threshold 1)
@@ -47,13 +44,10 @@ contract Deploy is Script {
     struct Deployed {
         WPOT wpot;
         MockStable usd;
-        PriceOracle oracle;
         InsuranceFund insurance;
         StabilizationReserve reserve;
-        PolicyNFT policy;
         StakingVault vault;
         SwapDesk desk;
-        MandateManager mandates;
         OracleCommittee committee;
     }
 
@@ -83,24 +77,21 @@ contract Deploy is Script {
     function _deploy(Config memory c) internal returns (Deployed memory d) {
         d.wpot = new WPOT();
         d.usd = new MockStable(c.deployer);
-        d.oracle = new PriceOracle(c.deployer, 1 days);
         d.insurance = new InsuranceFund(d.wpot);
         d.reserve = new StabilizationReserve(d.wpot);
-        d.policy = new PolicyNFT(c.deployer);
-        d.vault = new StakingVault(d.wpot, d.insurance, d.reserve, d.policy, c.deployer, c.treasury, c.stakingAccount);
-        d.desk = new SwapDesk(d.usd, IERC4626(address(d.vault)), d.oracle, c.deployer);
-        d.mandates = new MandateManager(d.usd, IERC4626(address(d.vault)), d.desk, c.deployer);
+        d.vault = new StakingVault(d.wpot, d.insurance, d.reserve, c.deployer, c.treasury, c.stakingAccount);
+        d.desk = new SwapDesk(d.usd, IERC4626(address(d.vault)), c.deployer, 1 days);
         d.committee = new OracleCommittee(d.vault, c.deployer);
     }
 
     function _wire(Config memory c, Deployed memory d) internal {
         d.insurance.setVault(address(d.vault));
         d.reserve.setVault(address(d.vault));
-        d.policy.grantRole(d.policy.MINTER_ROLE(), address(d.vault));
         d.vault.grantRole(d.vault.RELAYER_ROLE(), c.relayer);
         d.vault.grantRole(d.vault.SLASHER_ROLE(), address(d.committee));
-        d.oracle.grantRole(d.oracle.FEEDER_ROLE(), c.relayer);
-        d.oracle.setPrice(c.potPrice);
+        d.desk.grantRole(d.desk.FEEDER_ROLE(), c.relayer);
+        d.desk.grantRole(d.desk.KEEPER_ROLE(), c.relayer);
+        d.desk.setPrice(c.potPrice);
         d.committee.addAttester(c.attester);
         d.committee.setThreshold(1);
     }
@@ -121,18 +112,16 @@ contract Deploy is Script {
         vm.serializeAddress(k, "stakingAccount", c.stakingAccount);
         vm.serializeAddress(k, "WPOT", address(d.wpot));
         vm.serializeAddress(k, "tUSD", address(d.usd));
-        vm.serializeAddress(k, "PriceOracle", address(d.oracle));
         vm.serializeAddress(k, "InsuranceFund", address(d.insurance));
         vm.serializeAddress(k, "StabilizationReserve", address(d.reserve));
-        vm.serializeAddress(k, "PolicyNFT", address(d.policy));
         vm.serializeAddress(k, "StakingVault", address(d.vault));
         vm.serializeAddress(k, "SwapDesk", address(d.desk));
-        vm.serializeAddress(k, "MandateManager", address(d.mandates));
         string memory json = vm.serializeAddress(k, "OracleCommittee", address(d.committee));
+        vm.createDir("./deployments", true);
         vm.writeJson(json, string.concat("./deployments/", vm.toString(block.chainid), ".json"));
 
-        console2.log("StakingVault  ", address(d.vault));
-        console2.log("SwapDesk      ", address(d.desk));
-        console2.log("MandateManager", address(d.mandates));
+        console2.log("StakingVault   ", address(d.vault));
+        console2.log("SwapDesk       ", address(d.desk));
+        console2.log("OracleCommittee", address(d.committee));
     }
 }
