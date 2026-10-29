@@ -42,12 +42,34 @@ Reproduce with `cd relayer && npm install && npm run probe`.
 
 ## Contracts as built
 
-See `contracts/README.md`. Everything uses OpenZeppelin v5.4.0; ~48 KB of runtime code total, the largest being `StakingVault` (14 KB).
+See `contracts/README.md`. Everything uses OpenZeppelin v5.4.0; ~27 KB of runtime code total, the largest being `StakingVault` (12 KB).
+
+### Deploy cost
+
+revive holds a storage deposit of 0.06 tPOT per byte of deployed (init) code. Measured with `forge build --sizes` (`via_ir`, `optimizer_runs = 1`):
+
+| Contract | Initcode (B) | Deposit (tPOT) |
+|---|---|---|
+| StakingVault | 13,873 | ~832 |
+| SwapDesk | 6,319 | ~379 |
+| OracleCommittee | 3,855 | ~231 |
+| tUSD (MockStable) | 3,097 | ~186 |
+| WPOT | 2,870 | ~172 |
+| InsuranceFund | 1,298 | ~78 |
+| StabilizationReserve | 1,298 | ~78 |
+| **Total** | **32,610** | **~1,957** |
+
+The original 10-contract suite was 54,209 B (~3,253 tPOT); its full design is kept in [`ARCHITECTURE_v1_full-onchain.md`](ARCHITECTURE_v1_full-onchain.md). The cut came from moving the policy NFT to the native `Nfts` pallet, moving debit rules into the relayer, folding the price feed into `SwapDesk`, and compiling for size. Budget extra for revive's 30% code-hash lockup on instantiation and for storage slots written during wiring; the first real deploy gives the exact figure.
+
+Tests use `vm.getBlockTimestamp()` instead of `block.timestamp` for warps: under `via_ir` the compiler may cache `block.timestamp` within a test function.
 
 Changes from the original sketch:
 - `Router` → `SwapDesk`: an oracle-priced inventory desk, because no DEX is reachable from the EVM.
 - `InsuranceFund` is a plain WPOT bucket, not ERC-4626, since it has no external depositors in v1.
-- `StabilizationReserve` and `MandateManager` are new.
+- `StabilizationReserve` is new.
+- `PolicyNFT` → a locked NFT in the native `Nfts` pallet, minted by the relayer from `Deposit` events. No EVM code.
+- `MandateManager` → rules in the relayer. On-chain, `SwapDesk.depositFor` within a user-set auto-save budget.
+- `PriceOracle` → folded into `SwapDesk`.
 - `DecimalsOracle` was dropped: decimals are fixed (14 native, 18 EVM).
 - `Governance` and `MiniLend` are deferred. Parameters sit behind the admin role, which moves to a 24h `TimelockController`.
 
@@ -68,23 +90,19 @@ R < owed:  R + reserve draw → users
 - At today's ~25% gross, each 1,000 POT/yr pays 80 to users, 85 to insurance, and 85 to the reserve. A full reserve (10% of TVL) covers the target for ~15 months of zero yield.
 - The users' share vests linearly over one era (sfrxETH pattern), so depositing just before a reward and withdrawing after earns nothing.
 - `maxAccrualWindow` (2 days) stops a relayer outage from draining the reserve in one call.
-- Transparency views for the UI: `lastEffectiveRateBps`, `reserveCoverageDays`, `insuranceRatioBps`.
+- Transparency for the UI: `lastEffectiveRateBps` on-chain. Reserve runway (days) and insurance ratio are computed in the frontend from public balances, `totalAssets()` and `targetRateBps`.
 - The promise is in POT. The USD value shown in the app moves with the POT price, and the UI must say so. Insurance covers slashing, not price.
 
-## Debit mandates (`MandateManager`)
+## Savings automation (relayer + `SwapDesk.depositFor`)
 
 | | RECURRING ("auto") | SCHEDULED | THRESHOLD |
 |---|---|---|---|
-| **SAVE** (wallet tUSD → stPOT) | every `interval` | once at `start` | wallet > `bound` → sweep the excess (capped at `amount`) |
-| **PAY** (stPOT → tUSD to payee) | every `interval` | once at `start` | payee < `bound` → top up the gap (capped at `amount`) |
+| **SAVE** (wallet tUSD → stPOT), automatic | every `interval` | once at `start` | wallet > `bound` → sweep the excess (capped at `amount`) |
+| **PAY** (stPOT → tUSD to payee), one-tap | every `interval` | once at `start` | payee < `bound` → top up the gap (capped at `amount`) |
 
-- **Authority**: the owner's allowances to `MandateManager` (tUSD for SAVE, stPOT for PAY). Amounts are in tUSD.
-- **Execution**: permissionless `execute` / `executeBatch`; the relayer is the keeper (revive EVM has no cron).
-  - The batch records failures; 3 in a row auto-pauses the mandate.
-  - Recurring mandates don't burst-catch-up after downtime.
-  - Threshold mandates use `interval` as a cooldown.
-- A PAY mandate fails cleanly when the hot reserve can't cover it.
-- `Mandate` packs into 3 storage slots to keep revive storage deposits low. `cancel` deletes it and frees the deposit.
+- **Rules** live in the relayer: per-run cap, run limit, expiry, slippage, pause/cancel, auto-pause after 3 failures in a row, no burst catch-up after downtime, threshold cooldown.
+- **SAVE authority (on-chain)**: the user sets `SwapDesk.setAutoSaveBudget(x)` and approves tUSD to the desk. Only `KEEPER_ROLE` (the relayer) can call `depositFor(owner, amount, minShares)`. Each call spends the budget, and shares always go to `owner`, so a compromised keeper can at most move her own tUSD into her own savings, up to the budget.
+- **PAY**: moving money to a third party needs her signature, so the relayer sends a reminder with the payment pre-filled (`redeemToStable(shares, minUsdOut, payee)`) and she confirms it.
 
 ## Decimals handling
 
@@ -109,13 +127,13 @@ Rich, named events everywhere. Both the frontend and the relayer are event-drive
 - `InsuranceFund`: `Funded`, `Payout`
 - `OracleCommittee`: `AttesterBonded`, `AttesterSlashed`, `SlashingProofSubmitted`, `SlashingProofFinalized`
 - `Governance`: `ProposalCreated`, `Voted`, `TimelockQueued`, `ParameterApplied`
-- `PolicyNFT`: standard ERC-721 + a `TermsSnapshot(id, coverageConfig)`
+- Policy NFT (native `Nfts` pallet, locked item): minted by the relayer from `Deposit`, metadata records the terms at that block (`targetRateBps`, `insuranceShareBps`)
 
 ## Development order (concrete)
 
 1. WS probe script that enumerates pallets at `wss://test-node-v3.portaldot.dev` and prints the staking extrinsic signature. **Blocks every other decision below.**
 2. Foundry scaffold with `StakingVault` + mock reward emitter. First real commit.
-3. `InsuranceFund` + yield-split hook + `PolicyNFT`. End-to-end Foundry test.
+3. `InsuranceFund` + yield-split hook + policy NFT (native `Nfts`, minted by the relayer). End-to-end Foundry test.
 4. Deploy to V3 EVM testnet. Capture addresses + first tx hashes.
 5. Relayer v1: watches `Deposit`/`Withdraw`, submits `bond`/`unbond` or `nominationPools.join`/`unbond`.
 6. `OracleCommittee` + attester daemon. Mock slashing path first.
@@ -128,7 +146,7 @@ Rich, named events everywhere. Both the frontend and the relayer are event-drive
 
 Six steps, all on live V3 EVM testnet:
 
-1. User A deposits 100 POT. Receives 100 stPOT. Policy NFT minted. Dashboard shows deposit.
+1. User A deposits 100 POT. Receives 100 stPOT. Relayer mints the policy NFT (native `Nfts`). Dashboard shows deposit.
 2. Relayer bonds 100 POT on Substrate side; nominates a validator from the allowlist. Substrate explorer link visible.
 3. Reward event: 10 POT posted to vault via `notifyReward`. 1.5 POT → InsuranceFund, 8.5 POT → share price up.
 4. Attester daemons sign a slashing event of 5 POT. `OracleCommittee` reaches threshold; `StakingVault.reportSlash` draws the InsuranceFund to reimburse the vault.

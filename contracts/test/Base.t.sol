@@ -6,24 +6,18 @@ import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
 import {WPOT} from "../src/WPOT.sol";
 import {MockStable} from "../src/MockStable.sol";
-import {PriceOracle} from "../src/PriceOracle.sol";
 import {InsuranceFund, StabilizationReserve} from "../src/WpotBuckets.sol";
-import {PolicyNFT} from "../src/PolicyNFT.sol";
 import {StakingVault} from "../src/StakingVault.sol";
 import {SwapDesk} from "../src/SwapDesk.sol";
-import {MandateManager} from "../src/MandateManager.sol";
 import {OracleCommittee} from "../src/OracleCommittee.sol";
 
 abstract contract Base is Test {
     WPOT wpot;
     MockStable usd;
-    PriceOracle oracle;
     InsuranceFund insurance;
     StabilizationReserve reserve;
-    PolicyNFT policy;
     StakingVault vault;
     SwapDesk desk;
-    MandateManager mandates;
     OracleCommittee committee;
 
     address admin = makeAddr("admin");
@@ -31,7 +25,6 @@ abstract contract Base is Test {
     address treasury = makeAddr("treasury");
     address maria = makeAddr("maria");
     address bob = makeAddr("bob");
-    address landlord = makeAddr("landlord");
     address keeper = makeAddr("keeper");
 
     uint256 constant POT_PRICE = 0.5e18; // $0.50 per POT
@@ -42,18 +35,15 @@ abstract contract Base is Test {
         vm.startPrank(admin);
         wpot = new WPOT();
         usd = new MockStable(admin);
-        oracle = new PriceOracle(admin, 1 days);
-        oracle.setPrice(POT_PRICE);
         insurance = new InsuranceFund(wpot);
         reserve = new StabilizationReserve(wpot);
-        policy = new PolicyNFT(admin);
-        vault = new StakingVault(wpot, insurance, reserve, policy, admin, treasury, relayer);
+        vault = new StakingVault(wpot, insurance, reserve, admin, treasury, relayer);
         insurance.setVault(address(vault));
         reserve.setVault(address(vault));
-        policy.grantRole(policy.MINTER_ROLE(), address(vault));
         vault.grantRole(vault.RELAYER_ROLE(), relayer);
-        desk = new SwapDesk(usd, IERC4626(address(vault)), oracle, admin);
-        mandates = new MandateManager(usd, IERC4626(address(vault)), desk, admin);
+        desk = new SwapDesk(usd, IERC4626(address(vault)), admin, 1 days);
+        desk.setPrice(POT_PRICE);
+        desk.grantRole(desk.KEEPER_ROLE(), keeper);
         committee = new OracleCommittee(vault, admin);
         vault.grantRole(vault.SLASHER_ROLE(), address(committee));
         vm.stopPrank();
@@ -77,9 +67,9 @@ abstract contract Base is Test {
 
     /// @dev Advance time the way production does: the relayer keeps the price feed fresh.
     function _warp(uint256 dt) internal {
-        vm.warp(block.timestamp + dt);
+        vm.warp(vm.getBlockTimestamp() + dt);
         vm.prank(admin);
-        oracle.setPrice(POT_PRICE);
+        desk.setPrice(POT_PRICE);
     }
 
     function _reward(uint256 amount) internal {
