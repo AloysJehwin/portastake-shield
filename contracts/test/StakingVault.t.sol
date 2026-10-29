@@ -4,25 +4,17 @@ pragma solidity ^0.8.28;
 import {Base} from "./Base.t.sol";
 import {StakingVault} from "../src/StakingVault.sol";
 import {WPOT} from "../src/WPOT.sol";
+import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 
 contract StakingVaultTest is Base {
-    function test_depositNativeMintsSharesAndPolicy() public {
+    function test_depositNativeMintsSharesAndEmitsDeposit() public {
+        // The relayer mints the native-pallet policy NFT from this event.
+        vm.expectEmit(address(vault));
+        emit IERC4626.Deposit(maria, maria, 1_000 ether, 1_000 ether);
         uint256 shares = _depositNative(maria, 1_000 ether);
         assertEq(shares, 1_000 ether);
         assertEq(vault.balanceOf(maria), 1_000 ether);
         assertEq(vault.totalAssets(), 1_000 ether);
-        assertEq(policy.ownerOf(policy.policyOf(maria)), maria);
-
-        _depositNative(maria, 10 ether); // second deposit: same policy
-        assertEq(policy.balanceOf(maria), 1);
-    }
-
-    function test_policyIsSoulbound() public {
-        _depositNative(maria, 1 ether);
-        uint256 id = policy.policyOf(maria);
-        vm.prank(maria);
-        vm.expectRevert(abi.encodeWithSignature("Soulbound()"));
-        policy.transferFrom(maria, bob, id);
     }
 
     function test_sweepKeepsTotalAssetsAndSendsNative() public {
@@ -62,7 +54,7 @@ contract StakingVaultTest is Base {
         vm.prank(relayer);
         vault.sweepToStake(900 ether);
 
-        vm.warp(block.timestamp + ERA);
+        vm.warp(vm.getBlockTimestamp() + ERA);
         uint256 gross = _grossReward(900 ether, 2_500, ERA);
         _reward(gross);
 
@@ -70,9 +62,9 @@ contract StakingVaultTest is Base {
         // Nothing vests instantly…
         assertEq(vault.totalAssets(), 1_000 ether);
         // …half after half an era, all of it after a full era.
-        vm.warp(block.timestamp + ERA / 2);
+        vm.warp(vm.getBlockTimestamp() + ERA / 2);
         assertApproxEqAbs(vault.totalAssets(), 1_000 ether + owed / 2, 1);
-        vm.warp(block.timestamp + ERA / 2);
+        vm.warp(vm.getBlockTimestamp() + ERA / 2);
         assertEq(vault.totalAssets(), 1_000 ether + owed);
 
         uint256 surplus = gross - owed;
@@ -83,7 +75,7 @@ contract StakingVaultTest is Base {
 
     function test_reserveCapOverflowsToTreasury() public {
         _depositNative(maria, 1_000 ether);
-        vm.warp(block.timestamp + ERA);
+        vm.warp(vm.getBlockTimestamp() + ERA);
         _reward(300 ether); // huge reward: reserve room is only 10% of TVL = 100
         assertEq(reserve.balance(), 100 ether);
         assertGt(wpot.balanceOf(treasury), 0);
@@ -91,11 +83,11 @@ contract StakingVaultTest is Base {
 
     function test_shortfallToppedUpByReserve() public {
         _depositNative(maria, 1_000 ether);
-        vm.warp(block.timestamp + ERA);
+        vm.warp(vm.getBlockTimestamp() + ERA);
         _reward(50 ether); // seeds insurance + reserve
         uint256 resBefore = reserve.balance();
 
-        vm.warp(block.timestamp + ERA);
+        vm.warp(vm.getBlockTimestamp() + ERA);
         uint256 base = vault.totalAssets();
         _reward(0); // validator paid nothing this era
         uint256 owed = base * 800 * ERA / (10_000 * 365 days);
@@ -105,7 +97,7 @@ contract StakingVaultTest is Base {
 
     function test_emptyReserveEmitsDowngrade() public {
         _depositNative(maria, 1_000 ether);
-        vm.warp(block.timestamp + ERA);
+        vm.warp(vm.getBlockTimestamp() + ERA);
         vm.expectEmit(false, false, false, false, address(vault));
         emit StakingVault.RateDowngraded(0, 800);
         _reward(0);
@@ -114,7 +106,7 @@ contract StakingVaultTest is Base {
 
     function test_sandwichingARewardEarnsNothing() public {
         _depositNative(maria, 1_000 ether);
-        vm.warp(block.timestamp + ERA);
+        vm.warp(vm.getBlockTimestamp() + ERA);
 
         uint256 bobShares = _depositNative(bob, 1_000 ether);
         _reward(_grossReward(2_000 ether, 2_500, ERA));
@@ -128,9 +120,9 @@ contract StakingVaultTest is Base {
         _depositNative(maria, 1_000 ether);
         vm.prank(relayer);
         vault.sweepToStake(900 ether);
-        vm.warp(block.timestamp + ERA);
+        vm.warp(vm.getBlockTimestamp() + ERA);
         _reward(60 ether); // funds insurance
-        vm.warp(block.timestamp + ERA);
+        vm.warp(vm.getBlockTimestamp() + ERA);
 
         uint256 priceBefore = vault.convertToAssets(1 ether);
         vm.prank(address(committee));
@@ -202,11 +194,11 @@ contract StakingVaultTest is Base {
         assertFalse(ok);
     }
 
-    function test_transparencyViews() public {
-        _depositNative(maria, 1_000 ether);
-        vm.warp(block.timestamp + ERA);
-        _reward(40 ether);
-        assertGt(vault.reserveCoverageDays(), 0);
-        assertGt(vault.insuranceRatioBps(), 0);
+    function test_paramsUpdatedEmitsOneEvent() public {
+        vm.expectEmit(address(vault));
+        emit StakingVault.ParamsUpdated(700, 4_000, 1_000, 1_000, 2 days);
+        vm.prank(admin);
+        vault.setParams(700, 4_000, 1_000, 1_000, 2 days);
+        assertEq(vault.targetRateBps(), 700);
     }
 }
