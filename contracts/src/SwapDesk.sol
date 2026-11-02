@@ -9,18 +9,16 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
+import {ISwapDesk} from "./interfaces/Interfaces.sol";
+
 /// @title SwapDesk (Router)
 /// @notice One-call stablecoin on-ramp/off-ramp for the vault: tUSD -> POT -> stPOT and back.
 /// @dev v1 is an inventory desk priced by a relayer-fed POT/USD feed (read from the native
 ///      tPOT/pUSD assetConversion pool). Replace with a real DEX once one is reachable from the revive EVM.
-///
-///      Savings automation runs in the relayer. Its only on-chain power is `depositFor`: it can move a
-///      user's tUSD into that same user's savings, up to a budget the user sets here.
-contract SwapDesk is AccessControl, ReentrancyGuard {
+contract SwapDesk is ISwapDesk, AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     bytes32 public constant FEEDER_ROLE = keccak256("FEEDER_ROLE");
-    bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
 
     uint256 public constant BPS = 10_000;
     uint256 public constant MAX_FEE_BPS = 300;
@@ -37,9 +35,6 @@ contract SwapDesk is AccessControl, ReentrancyGuard {
     uint64 public updatedAt;
     uint64 public maxAge;
 
-    /// @notice tUSD the keeper may still auto-save on each user's behalf.
-    mapping(address => uint256) public autoSaveBudget;
-
     event StableDeposited(
         address indexed payer, address indexed receiver, uint256 usdIn, uint256 potIn, uint256 shares
     );
@@ -48,7 +43,6 @@ contract SwapDesk is AccessControl, ReentrancyGuard {
     );
     event PriceUpdated(uint256 price, uint64 updatedAt);
     event MaxAgeUpdated(uint64 maxAge);
-    event AutoSaveBudgetSet(address indexed owner, uint256 budget);
     event FeeUpdated(uint256 feeBps);
     event LiquidityRemoved(address indexed token, address indexed to, uint256 amount);
 
@@ -58,7 +52,6 @@ contract SwapDesk is AccessControl, ReentrancyGuard {
     error ZeroAmount();
     error StalePrice(uint64 updatedAt);
     error InvalidPrice();
-    error OverBudget(uint256 requested, uint256 budget);
 
     constructor(IERC20 stable_, IERC4626 vault_, address admin, uint64 maxAge_) {
         stable = stable_;
@@ -102,6 +95,13 @@ contract SwapDesk is AccessControl, ReentrancyGuard {
         usdOut = Math.mulDiv(gross, BPS - feeBps, BPS);
     }
 
+    /// @notice stPOT shares to redeem so that the desk pays out at least `usdAmount`.
+    function quoteSharesForUsd(uint256 usdAmount) public view returns (uint256 shares) {
+        uint256 potNeeded =
+            Math.mulDiv(usdAmount * stableScale, 1e18 * BPS, getPrice() * (BPS - feeBps), Math.Rounding.Ceil);
+        shares = vault.previewWithdraw(potNeeded);
+    }
+
     // ---------------------------------------------------------------------
     // Swaps
     // ---------------------------------------------------------------------
@@ -112,26 +112,16 @@ contract SwapDesk is AccessControl, ReentrancyGuard {
         nonReentrant
         returns (uint256 shares)
     {
-        shares = _depositWithStable(msg.sender, usdAmount, minShares, receiver);
-    }
+        if (usdAmount == 0) revert ZeroAmount();
+        uint256 potIn = quotePotForUsd(usdAmount);
+        uint256 inventory = wpot.balanceOf(address(this));
+        if (potIn > inventory) revert InsufficientInventory(address(wpot), potIn, inventory);
 
-    /// @notice Keeper-run auto-save: moves `owner`'s tUSD into `owner`'s own savings, within their budget.
-    function depositFor(address owner, uint256 usdAmount, uint256 minShares)
-        external
-        nonReentrant
-        onlyRole(KEEPER_ROLE)
-        returns (uint256 shares)
-    {
-        uint256 budget = autoSaveBudget[owner];
-        if (usdAmount > budget) revert OverBudget(usdAmount, budget);
-        autoSaveBudget[owner] = budget - usdAmount;
-        shares = _depositWithStable(owner, usdAmount, minShares, owner);
-    }
-
-    /// @notice Cap how much tUSD the keeper may auto-save for you in total. Set 0 to stop automation.
-    function setAutoSaveBudget(uint256 budget) external {
-        autoSaveBudget[msg.sender] = budget;
-        emit AutoSaveBudgetSet(msg.sender, budget);
+        stable.safeTransferFrom(msg.sender, address(this), usdAmount);
+        wpot.forceApprove(address(vault), potIn);
+        shares = vault.deposit(potIn, receiver);
+        if (shares < minShares) revert Slippage(shares, minShares);
+        emit StableDeposited(msg.sender, receiver, usdAmount, potIn, shares);
     }
 
     /// @notice Redeem the caller's stPOT for tUSD sent to `receiver`. Only the hot reserve is instant.
@@ -149,22 +139,6 @@ contract SwapDesk is AccessControl, ReentrancyGuard {
         if (usdOut > inventory) revert InsufficientInventory(address(stable), usdOut, inventory);
         stable.safeTransfer(receiver, usdOut);
         emit StableRedeemed(msg.sender, receiver, shares, potOut, usdOut);
-    }
-
-    function _depositWithStable(address payer, uint256 usdAmount, uint256 minShares, address receiver)
-        internal
-        returns (uint256 shares)
-    {
-        if (usdAmount == 0) revert ZeroAmount();
-        uint256 potIn = quotePotForUsd(usdAmount);
-        uint256 inventory = wpot.balanceOf(address(this));
-        if (potIn > inventory) revert InsufficientInventory(address(wpot), potIn, inventory);
-
-        stable.safeTransferFrom(payer, address(this), usdAmount);
-        wpot.forceApprove(address(vault), potIn);
-        shares = vault.deposit(potIn, receiver);
-        if (shares < minShares) revert Slippage(shares, minShares);
-        emit StableDeposited(payer, receiver, usdAmount, potIn, shares);
     }
 
     // ---------------------------------------------------------------------

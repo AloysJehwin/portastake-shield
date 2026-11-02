@@ -13,11 +13,11 @@ On the surface: deposit stablecoins, earn 8% a year (in POT), automate savings a
 
 | Piece | State |
 |---|---|
-| Smart contracts (`contracts/`) | ✅ 7 contracts built, size-optimized for revive; 44 tests pass (unit, fuzz, and invariant runs of ~8,200 random actions) |
-| Deploy script | ✅ Verified on a local chain and in a no-broadcast simulation against the live V3 RPC |
-| Testnet deployment | ⏳ Waiting on tPOT. Code storage deposits total ~1,960 tPOT, down from ~3,300 ([details](docs/ARCHITECTURE.md#deploy-cost)) |
+| Smart contracts (`contracts/`) | ✅ 9 contracts built, size-optimized for revive; 55 tests pass (unit, fuzz, and invariant runs of ~8,200 random actions) |
+| Deploy script | ✅ Staged (`Deploy1Core` → `Deploy4Extras`), verified on a local chain and in a no-broadcast simulation against the live V3 RPC |
+| Testnet deployment | ⏳ Partially funded. First deployable set (stages 1–3) needs ~2,427 tPOT; stage 4 (PolicyNFT + MandateManager) adds ~1,100 more ([details](docs/ARCHITECTURE.md#deploy-cost--staged)) |
 | Relayer (`relayer/`) | 🚧 Chain probe done; staking bridge + keeper next |
-| Frontend (`frontend/`) | 🚧 Not started |
+| Frontend (`frontend/`) | ✅ Vite + React + wagmi + RainbowKit; five pages (Home / Deposit / Withdraw / Automate / Activity); light theme with a glass nav; live-wired to the contracts, stage-aware |
 
 ## Quickstart
 
@@ -27,12 +27,24 @@ cd portastake-shield/contracts
 forge build
 forge test
 
-# Deploy to PortaldotV3 testnet (needs a funded EVM key in contracts/.env)
+# Deploy to PortaldotV3 testnet (needs a funded EVM key in contracts/.env).
+# Staged — pay only for what you can afford right now; each stage merges into deployments/<chainId>.json.
 source .env
-forge script script/Deploy.s.sol --rpc-url portaldot --broadcast --legacy --slow
+forge script script/Deploy1Core.s.sol      --rpc-url portaldot --broadcast --legacy --slow   # ~1,452 tPOT
+forge script script/Deploy2Desk.s.sol      --rpc-url portaldot --broadcast --legacy --slow   # +~690
+forge script script/Deploy3Committee.s.sol --rpc-url portaldot --broadcast --legacy --slow   # +~285 (cumulative ~2,427)
+# Stage 4 is opt-in and deferable until the tPOT budget allows it:
+WITH_POLICY=1   forge script script/Deploy4Extras.s.sol --rpc-url portaldot --broadcast --legacy --slow  # +~463
+WITH_MANDATES=1 forge script script/Deploy4Extras.s.sol --rpc-url portaldot --broadcast --legacy --slow  # +~633
+
+# How much tPOT is on this key? (never leaves the shell)
+../scripts/check-balance.sh
 
 # Re-check the live chain facts the design depends on
 cd ../relayer && npm install && npm run probe
+
+# Run the UI (needs the contracts deployed on a chain the wallet is pointed at)
+cd ../frontend && pnpm install && pnpm sync-abis && pnpm dev
 ```
 
 ---
@@ -280,7 +292,7 @@ If this ships, three real things change:
 - **Decimals**: 14 on Substrate, 18 on EVM (`nativeToEthRatio = 10000`). No `DecimalsOracle` needed.
 - **Yield**: ~25% gross staking APY funds the reserve-backed 8% target. See `docs/ARCHITECTURE.md`.
 - **Unbonding**: 672 eras ≈ 168 days, so instant withdrawals come from the hot reserve.
-- **Deploy cost**: revive accepts plain solc bytecode, but charges ~0.06 tPOT per byte of stored code. The original 10-contract suite needed ~3,300 tPOT in (refundable) storage deposits. After moving the policy NFT and automation rules off the EVM and compiling for size, the 7-contract suite needs ~1,960 tPOT. That's still above the standard 500 tPOT hackathon allocation.
+- **Deploy cost**: revive accepts plain solc bytecode, but charges ~0.06 tPOT per byte of stored code (plus a ~30% code-hash lockup on instantiation and the storage slots written at wiring). The suite is deployed in four stages so you only pay for what you can afford right now. The core earning flow + stablecoin on-ramp + slash committee costs ~2,427 tPOT (stages 1–3); the on-chain certificate NFT and the save/pay automation add ~1,100 more in stage 4. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#deploy-cost--staged).
 - **Testnet POT** comes from the Portaldot team via a ticket in the Discord `#open-ticket` channel (native `5…` address + registration proof).
 
 ---

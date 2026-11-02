@@ -1,0 +1,8 @@
+# pnpm 11 moved per-project settings out of package.json. These dependencies
+# ship optional native build scripts; approving them silences
+# ERR_PNPM_IGNORED_BUILDS so `pnpm install` can run non-interactively.
+allowBuilds:
+  bufferutil: true
+  esbuild: true
+  keccak: true
+  utf-8-validate: true

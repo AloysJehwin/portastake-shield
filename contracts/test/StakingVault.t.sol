@@ -4,17 +4,51 @@ pragma solidity ^0.8.28;
 import {Base} from "./Base.t.sol";
 import {StakingVault} from "../src/StakingVault.sol";
 import {WPOT} from "../src/WPOT.sol";
-import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
+import {PolicyNFT} from "../src/PolicyNFT.sol";
+import {IPolicyNFT} from "../src/interfaces/Interfaces.sol";
 
 contract StakingVaultTest is Base {
-    function test_depositNativeMintsSharesAndEmitsDeposit() public {
-        // The relayer mints the native-pallet policy NFT from this event.
-        vm.expectEmit(address(vault));
-        emit IERC4626.Deposit(maria, maria, 1_000 ether, 1_000 ether);
+    function test_depositNativeMintsSharesAndPolicy() public {
         uint256 shares = _depositNative(maria, 1_000 ether);
         assertEq(shares, 1_000 ether);
         assertEq(vault.balanceOf(maria), 1_000 ether);
         assertEq(vault.totalAssets(), 1_000 ether);
+        assertEq(policy.ownerOf(policy.policyOf(maria)), maria);
+
+        _depositNative(maria, 10 ether); // second deposit: same policy
+        assertEq(policy.balanceOf(maria), 1);
+    }
+
+    function test_policyIsSoulbound() public {
+        _depositNative(maria, 1 ether);
+        uint256 id = policy.policyOf(maria);
+        vm.prank(maria);
+        vm.expectRevert(abi.encodeWithSignature("Soulbound()"));
+        policy.transferFrom(maria, bob, id);
+    }
+
+    function test_depositWithoutPolicyWorks() public {
+        // Stage-1 reality: the vault is live but PolicyNFT has not been deployed yet.
+        vm.prank(admin);
+        vault.setPolicy(IPolicyNFT(address(0)));
+        uint256 shares = _depositNative(maria, 1_000 ether);
+        assertEq(shares, 1_000 ether);
+        assertEq(policy.balanceOf(maria), 0); // nothing minted
+    }
+
+    function test_setPolicyEnablesMintOnLaterDeposits() public {
+        // Clear policy, deposit, then re-attach: the earlier depositor stays uncovered,
+        // the next one mints as normal.
+        vm.prank(admin);
+        vault.setPolicy(IPolicyNFT(address(0)));
+        _depositNative(maria, 1 ether);
+        assertEq(policy.balanceOf(maria), 0);
+
+        vm.prank(admin);
+        vault.setPolicy(policy);
+        _depositNative(bob, 1 ether);
+        assertEq(policy.balanceOf(bob), 1);
+        assertEq(policy.balanceOf(maria), 0); // backfill caveat is intentional
     }
 
     function test_sweepKeepsTotalAssetsAndSendsNative() public {
