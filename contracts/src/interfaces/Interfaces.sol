@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-interface IPriceOracle {
-    /// @notice USD per 1 POT, 18-decimal fixed point. Reverts if stale or unset.
-    function getPrice() external view returns (uint256);
-}
-
 interface IWpotBucket {
     /// @notice Sends up to `amount` WPOT to the vault. Returns what was actually sent.
     function pull(uint256 amount) external returns (uint256 sent);

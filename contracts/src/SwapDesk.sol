@@ -9,14 +9,16 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
-import {IPriceOracle, ISwapDesk} from "./interfaces/Interfaces.sol";
+import {ISwapDesk} from "./interfaces/Interfaces.sol";
 
 /// @title SwapDesk (Router)
 /// @notice One-call stablecoin on-ramp/off-ramp for the vault: tUSD -> POT -> stPOT and back.
-/// @dev v1 is an inventory desk priced by PriceOracle (fed from the native tPOT/pUSD
-///      assetConversion pool). Replace with a real DEX once one is reachable from the revive EVM.
+/// @dev v1 is an inventory desk priced by a relayer-fed POT/USD feed (read from the native
+///      tPOT/pUSD assetConversion pool). Replace with a real DEX once one is reachable from the revive EVM.
 contract SwapDesk is ISwapDesk, AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
+
+    bytes32 public constant FEEDER_ROLE = keccak256("FEEDER_ROLE");
 
     uint256 public constant BPS = 10_000;
     uint256 public constant MAX_FEE_BPS = 300;
@@ -24,10 +26,14 @@ contract SwapDesk is ISwapDesk, AccessControl, ReentrancyGuard {
     IERC20 public immutable stable;
     IERC20 public immutable wpot;
     IERC4626 public immutable vault;
-    IPriceOracle public immutable oracle;
     uint256 public immutable stableScale; // 10 ** (18 - stable decimals)
 
     uint256 public feeBps = 30;
+
+    /// @notice USD per 1 POT, 18-decimal fixed point.
+    uint256 public price;
+    uint64 public updatedAt;
+    uint64 public maxAge;
 
     event StableDeposited(
         address indexed payer, address indexed receiver, uint256 usdIn, uint256 potIn, uint256 shares
@@ -35,6 +41,8 @@ contract SwapDesk is ISwapDesk, AccessControl, ReentrancyGuard {
     event StableRedeemed(
         address indexed owner, address indexed receiver, uint256 shares, uint256 potOut, uint256 usdOut
     );
+    event PriceUpdated(uint256 price, uint64 updatedAt);
+    event MaxAgeUpdated(uint64 maxAge);
     event FeeUpdated(uint256 feeBps);
     event LiquidityRemoved(address indexed token, address indexed to, uint256 amount);
 
@@ -42,14 +50,35 @@ contract SwapDesk is ISwapDesk, AccessControl, ReentrancyGuard {
     error Slippage(uint256 got, uint256 min);
     error FeeTooHigh(uint256 feeBps);
     error ZeroAmount();
+    error StalePrice(uint64 updatedAt);
+    error InvalidPrice();
 
-    constructor(IERC20 stable_, IERC4626 vault_, IPriceOracle oracle_, address admin) {
+    constructor(IERC20 stable_, IERC4626 vault_, address admin, uint64 maxAge_) {
         stable = stable_;
         vault = vault_;
         wpot = IERC20(vault_.asset());
-        oracle = oracle_;
         stableScale = 10 ** (18 - IERC20Metadata(address(stable_)).decimals());
+        maxAge = maxAge_;
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(FEEDER_ROLE, admin);
+    }
+
+    // ---------------------------------------------------------------------
+    // Price feed
+    // ---------------------------------------------------------------------
+
+    /// @notice Current POT/USD price. Reverts if unset or older than `maxAge`.
+    function getPrice() public view returns (uint256) {
+        if (price == 0) revert InvalidPrice();
+        if (block.timestamp > updatedAt + maxAge) revert StalePrice(updatedAt);
+        return price;
+    }
+
+    function setPrice(uint256 newPrice) external onlyRole(FEEDER_ROLE) {
+        if (newPrice == 0) revert InvalidPrice();
+        price = newPrice;
+        updatedAt = uint64(block.timestamp);
+        emit PriceUpdated(newPrice, updatedAt);
     }
 
     // ---------------------------------------------------------------------
@@ -57,19 +86,19 @@ contract SwapDesk is ISwapDesk, AccessControl, ReentrancyGuard {
     // ---------------------------------------------------------------------
 
     function quotePotForUsd(uint256 usdAmount) public view returns (uint256 potOut) {
-        uint256 gross = Math.mulDiv(usdAmount * stableScale, 1e18, oracle.getPrice());
+        uint256 gross = Math.mulDiv(usdAmount * stableScale, 1e18, getPrice());
         potOut = Math.mulDiv(gross, BPS - feeBps, BPS);
     }
 
     function quoteUsdForPot(uint256 potAmount) public view returns (uint256 usdOut) {
-        uint256 gross = Math.mulDiv(potAmount, oracle.getPrice(), 1e18 * stableScale);
+        uint256 gross = Math.mulDiv(potAmount, getPrice(), 1e18 * stableScale);
         usdOut = Math.mulDiv(gross, BPS - feeBps, BPS);
     }
 
     /// @notice stPOT shares to redeem so that the desk pays out at least `usdAmount`.
     function quoteSharesForUsd(uint256 usdAmount) public view returns (uint256 shares) {
         uint256 potNeeded =
-            Math.mulDiv(usdAmount * stableScale, 1e18 * BPS, oracle.getPrice() * (BPS - feeBps), Math.Rounding.Ceil);
+            Math.mulDiv(usdAmount * stableScale, 1e18 * BPS, getPrice() * (BPS - feeBps), Math.Rounding.Ceil);
         shares = vault.previewWithdraw(potNeeded);
     }
 
@@ -77,7 +106,7 @@ contract SwapDesk is ISwapDesk, AccessControl, ReentrancyGuard {
     // Swaps
     // ---------------------------------------------------------------------
 
-    /// @notice Pay `usdAmount` tUSD, receive stPOT in `receiver`'s name (and a PolicyNFT on first deposit).
+    /// @notice Pay `usdAmount` tUSD, receive stPOT in `receiver`'s name.
     function depositWithStable(uint256 usdAmount, uint256 minShares, address receiver)
         external
         nonReentrant
@@ -115,6 +144,11 @@ contract SwapDesk is ISwapDesk, AccessControl, ReentrancyGuard {
     // ---------------------------------------------------------------------
     // Admin. Liquidity is added with plain ERC-20 transfers.
     // ---------------------------------------------------------------------
+
+    function setMaxAge(uint64 maxAge_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        maxAge = maxAge_;
+        emit MaxAgeUpdated(maxAge_);
+    }
 
     function setFee(uint256 feeBps_) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (feeBps_ > MAX_FEE_BPS) revert FeeTooHigh(feeBps_);
