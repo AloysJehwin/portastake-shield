@@ -31,7 +31,7 @@ contract OracleCommitteeTest is Base {
         _depositNative(maria, 1_000 ether);
         vm.prank(relayer);
         vault.sweepToStake(900 ether);
-        vm.warp(block.timestamp + ERA);
+        vm.warp(vm.getBlockTimestamp() + ERA);
         _reward(60 ether); // funds insurance
     }
 
