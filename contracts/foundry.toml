@@ -10,8 +10,16 @@ optimizer = true
 # revive charges a storage deposit per byte of deployed code, so optimise for size, not gas.
 optimizer_runs = 1
 via_ir = true
+# Strip the CBOR metadata trailer (~42 B per contract). As a bonus, two contracts
+# with identical code (InsuranceFund + StabilizationReserve) now share a code hash
+# on revive, so the second one deploys for free.
+bytecode_hash = "none"
+cbor_metadata = false
 fs_permissions = [{ access = "read-write", path = "./deployments" }]
-remappings = ["@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"]
+remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "solady/=lib/solady/src/",
+]
 
 [profile.default.fuzz]
 runs = 512

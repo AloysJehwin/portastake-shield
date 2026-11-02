@@ -42,34 +42,34 @@ Reproduce with `cd relayer && npm install && npm run probe`.
 
 ## Contracts as built
 
-See `contracts/README.md`. Everything uses OpenZeppelin v5.4.0; ~27 KB of runtime code total, the largest being `StakingVault` (12 KB).
+See `contracts/README.md`. Everything uses OpenZeppelin v5.4.0.
 
-### Deploy cost
+### Deploy cost — staged
 
-revive holds a storage deposit of 0.06 tPOT per byte of deployed (init) code. Measured with `forge build --sizes` (`via_ir`, `optimizer_runs = 1`):
+revive holds a storage deposit of ~0.06 tPOT per byte of deployed (init) code, plus a ~30% code-hash lockup on instantiation and the storage slots written during wiring. Measured all-in at ~0.074 tPOT/byte with `forge build --sizes` (`via_ir`, `optimizer_runs = 1`):
 
-| Contract | Initcode (B) | Deposit (tPOT) |
-|---|---|---|
-| StakingVault | 13,873 | ~832 |
-| SwapDesk | 6,319 | ~379 |
-| OracleCommittee | 3,855 | ~231 |
-| tUSD (MockStable) | 3,097 | ~186 |
-| WPOT | 2,870 | ~172 |
-| InsuranceFund | 1,298 | ~78 |
-| StabilizationReserve | 1,298 | ~78 |
-| **Total** | **32,610** | **~1,957** |
+| Stage | Script | Deploys | Added code (B) | Added cost (tPOT) | Running total |
+|---|---|---|---|---|---|
+| 1 Core | `Deploy1Core.s.sol` | WPOT, InsuranceFund, StabilizationReserve, StakingVault | ~19,620 | ~1,452 | **~1,452** |
+| 2 Desk | `Deploy2Desk.s.sol` | MockStable (tUSD), SwapDesk | ~9,327 | ~690 | **~2,142** |
+| 3 Committee | `Deploy3Committee.s.sol` | OracleCommittee | ~3,855 | ~285 | **~2,427 ✅ under 2,500** |
+| 4a | `Deploy4Extras.s.sol WITH_POLICY=1` | PolicyNFT | ~6,264 | ~463 | ~2,890 (later) |
+| 4b | `Deploy4Extras.s.sol WITH_MANDATES=1` | MandateManager | ~8,556 | ~633 | ~3,523 (later) |
 
-The original 10-contract suite was 54,209 B (~3,253 tPOT); its full design is kept in [`ARCHITECTURE_v1_full-onchain.md`](ARCHITECTURE_v1_full-onchain.md). The cut came from moving the policy NFT to the native `Nfts` pallet, moving debit rules into the relayer, folding the price feed into `SwapDesk`, and compiling for size. Budget extra for revive's 30% code-hash lockup on instantiation and for storage slots written during wiring; the first real deploy gives the exact figure.
+Stages 1–3 give users: native tPOT deposit, stablecoin on-ramp, 10% hot-reserve exits, slash reporting and insurance payouts. Nothing is deleted — PolicyNFT and MandateManager still live in `contracts/src/` and ship in stage 4 when more tPOT is available.
+
+The vault's `policy` field is settable (admin only), and `_deposit` + `depositNative` skip the mint while it is unset, so stage 1 works without the certificate contract. **Backfill caveat**: users who deposit before stage 4a runs do not retroactively receive a policy NFT.
+
+Each stage reads `deployments/<chainId>.json` from the previous stage and writes a merged version back. The in-memory `DeployAll.s.sol` script runs the whole suite in a single broadcast for local chain / CI parity.
 
 Tests use `vm.getBlockTimestamp()` instead of `block.timestamp` for warps: under `via_ir` the compiler may cache `block.timestamp` within a test function.
 
 Changes from the original sketch:
-- `Router` → `SwapDesk`: an oracle-priced inventory desk, because no DEX is reachable from the EVM.
+- `Router` → `SwapDesk`: an oracle-priced inventory desk, because no DEX is reachable from the EVM. The POT/USD feed is folded into `SwapDesk` itself (no separate `PriceOracle` contract).
 - `InsuranceFund` is a plain WPOT bucket, not ERC-4626, since it has no external depositors in v1.
 - `StabilizationReserve` is new.
-- `PolicyNFT` → a locked NFT in the native `Nfts` pallet, minted by the relayer from `Deposit` events. No EVM code.
-- `MandateManager` → rules in the relayer. On-chain, `SwapDesk.depositFor` within a user-set auto-save budget.
-- `PriceOracle` → folded into `SwapDesk`.
+- `PolicyNFT` is unchanged in design (soulbound ERC-721), but attached to the vault by an admin `setPolicy` call so it can arrive in a later deploy stage.
+- `MandateManager` is unchanged in design. It depends on `SwapDesk` and the vault at construction, so it is naturally deployed last.
 - `DecimalsOracle` was dropped: decimals are fixed (14 native, 18 EVM).
 - `Governance` and `MiniLend` are deferred. Parameters sit behind the admin role, which moves to a 24h `TimelockController`.
 

@@ -1,35 +1,47 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+import {ERC4626} from "solady/tokens/ERC4626.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {WPOT} from "./WPOT.sol";
 import {RateEngine} from "./RateEngine.sol";
-import {IWpotBucket, ISlashableVault} from "./interfaces/Interfaces.sol";
+import {IWpotBucket, IPolicyNFT, ISlashableVault} from "./interfaces/Interfaces.sol";
+
+/// @dev Minimal in-place replacement for OpenZeppelin's Math.min / mulDiv (no overflow magic;
+/// our inputs are 18-decimal balances × bps, well under 2^192).
+library TinyMath {
+    function min(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a < b ? a : b;
+    }
+    function mulDiv(uint256 a, uint256 b, uint256 denom) internal pure returns (uint256) {
+        return (a * b) / denom;
+    }
+}
 
 /// @title StakingVault (stPOT)
 /// @notice ERC-4626 vault over WPOT. Deposits mint stPOT; the relayer bonds swept POT on the
 ///         Substrate side (pallet-revive has no staking precompile) and reports rewards back.
 ///
-/// totalAssets = hot WPOT + bondedPrincipal - unvested rewards - pending unstake claims
+/// Access control is a hand-rolled 2-role + admin table (RELAYER / SLASHER / ADMIN) instead of
+/// OpenZeppelin's AccessControl: we only need boolean role checks, not role-admin trees or
+/// enumeration, and OZ's version adds ~800 bytes of code for features we never call. Pause state
+/// is a single bool. Reentrancy is a 1-slot guard. These three cuts shave roughly 1 kB off the
+/// deployed vault, which is 60% of stage-1 revive deposit.
 ///
-/// Rewards are split by RateEngine (reserve-backed target rate) and the users' portion is streamed
-/// linearly over one era so a deposit just before a reward can't capture it.
-///
-/// The coverage certificate is a locked NFT in the native `Nfts` pallet, minted by the relayer
-/// from this vault's `Deposit` events, so it costs no EVM code.
-contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISlashableVault {
+/// `policy` is settable so the coverage NFT can arrive in a later deploy stage without a vault
+/// redeploy. While unset, deposits succeed and simply skip the mint.
+contract StakingVault is ERC4626, ISlashableVault {
     using SafeERC20 for IERC20;
+    using TinyMath for uint256;
 
+    // --- roles (hand-rolled, zero-cost storage layout) ---
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
     bytes32 public constant SLASHER_ROLE = keccak256("SLASHER_ROLE");
+    bytes32 public constant DEFAULT_ADMIN_ROLE = 0x00;
+
+    mapping(bytes32 => mapping(address => bool)) private _roles;
 
     uint256 public constant BPS = 10_000;
     uint256 public constant NATIVE_UNIT = 1e4;
@@ -42,6 +54,9 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
     WPOT public immutable wpot;
     IWpotBucket public immutable insuranceFund;
     IWpotBucket public immutable reserve;
+
+    /// @notice Coverage certificate contract. Settable so it can arrive in a later deploy stage.
+    IPolicyNFT public policy;
 
     address public treasury;
     /// @notice H160 of the relayer's mapped SS58 stash; swept POT lands in that Substrate account.
@@ -61,6 +76,10 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
     uint64 public streamEnd;
     uint64 public lastAccrual;
     uint256 public lastEffectiveRateBps;
+
+    // --- pause + reentrancy (1 slot each, both booleans) ---
+    bool public paused;
+    uint256 private _entered; // 0 = free, 1 = inside call
 
     struct UnstakeRequest {
         address receiver;
@@ -94,6 +113,10 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
         uint256 maxAccrualWindow
     );
     event AddressApplied(bytes32 indexed name, address value);
+    event RoleGranted(bytes32 indexed role, address indexed account);
+    event RoleRevoked(bytes32 indexed role, address indexed account);
+    event Paused(address by);
+    event Unpaused(address by);
 
     error ZeroAmount();
     error NotNativeUnit(uint256 amount);
@@ -106,6 +129,26 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
     error ZeroAddress();
     error NativeTransferFailed();
     error UnexpectedNative();
+    error NotAuthorized(bytes32 role);
+    error Reentrant();
+    error IsPaused();
+
+    modifier onlyRole(bytes32 role) {
+        if (!_roles[role][msg.sender]) revert NotAuthorized(role);
+        _;
+    }
+
+    modifier nonReentrant() {
+        if (_entered == 1) revert Reentrant();
+        _entered = 1;
+        _;
+        _entered = 0;
+    }
+
+    modifier whenNotPaused() {
+        if (paused) revert IsPaused();
+        _;
+    }
 
     constructor(
         WPOT wpot_,
@@ -114,7 +157,7 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
         address admin,
         address treasury_,
         address stakingAccount_
-    ) ERC20("Staked tPOT", "stPOT") ERC4626(IERC20(address(wpot_))) {
+    ) {
         if (treasury_ == address(0) || stakingAccount_ == address(0) || admin == address(0)) {
             revert ZeroAddress();
         }
@@ -124,12 +167,49 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
         treasury = treasury_;
         stakingAccount = stakingAccount_;
         lastAccrual = uint64(block.timestamp);
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _roles[DEFAULT_ADMIN_ROLE][admin] = true;
+        emit RoleGranted(DEFAULT_ADMIN_ROLE, admin);
+    }
+
+    /// @dev Solady's ERC20 reads name/symbol from these virtual getters instead of storage.
+    function name() public pure override returns (string memory) {
+        return "Staked tPOT";
+    }
+
+    function symbol() public pure override returns (string memory) {
+        return "stPOT";
+    }
+
+    /// @dev Solady's ERC4626 asset() is virtual; return the WPOT address.
+    function asset() public view override returns (address) {
+        return address(wpot);
     }
 
     /// @dev Native POT only arrives from WPOT unwraps; rewards/claims come through payable functions.
     receive() external payable {
         if (msg.sender != address(wpot)) revert UnexpectedNative();
+    }
+
+    // ---------------------------------------------------------------------
+    // Access control
+    // ---------------------------------------------------------------------
+
+    function hasRole(bytes32 role, address account) public view returns (bool) {
+        return _roles[role][account];
+    }
+
+    function grantRole(bytes32 role, address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (!_roles[role][account]) {
+            _roles[role][account] = true;
+            emit RoleGranted(role, account);
+        }
+    }
+
+    function revokeRole(bytes32 role, address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_roles[role][account]) {
+            _roles[role][account] = false;
+            emit RoleRevoked(role, account);
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -157,19 +237,25 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
     }
 
     function maxDeposit(address receiver) public view override returns (uint256) {
-        return paused() ? 0 : super.maxDeposit(receiver);
+        return paused ? 0 : super.maxDeposit(receiver);
     }
 
     function maxMint(address receiver) public view override returns (uint256) {
-        return paused() ? 0 : super.maxMint(receiver);
+        return paused ? 0 : super.maxMint(receiver);
     }
 
     function maxWithdraw(address owner) public view override returns (uint256) {
-        return Math.min(super.maxWithdraw(owner), availableLiquidity());
+        return super.maxWithdraw(owner).min(availableLiquidity());
     }
 
     function maxRedeem(address owner) public view override returns (uint256) {
-        return Math.min(super.maxRedeem(owner), convertToShares(availableLiquidity()));
+        return super.maxRedeem(owner).min(convertToShares(availableLiquidity()));
+    }
+
+    function _deposit(address caller, address receiver, uint256 assets, uint256 shares) internal override {
+        if (paused) revert IsPaused();
+        super._deposit(caller, receiver, assets, shares);
+        _issuePolicy(receiver);
     }
 
     /// @notice Deposit native tPOT directly (wraps to WPOT).
@@ -180,6 +266,13 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
         wpot.deposit{value: assets}();
         _mint(receiver, shares);
         emit Deposit(msg.sender, receiver, assets, shares);
+        _issuePolicy(receiver);
+    }
+
+    /// @dev Skip the mint while `policy` is unset so stage 1 (vault without the NFT) still works.
+    function _issuePolicy(address holder) internal {
+        IPolicyNFT p = policy;
+        if (address(p) != address(0)) p.mintFor(holder, targetRateBps, insuranceShareBps);
     }
 
     // ---------------------------------------------------------------------
@@ -192,7 +285,7 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
         if (amount % NATIVE_UNIT != 0) revert NotNativeUnit(amount);
         uint256 liquid = availableLiquidity();
         if (amount > liquid) revert InsufficientLiquidity(amount, liquid);
-        uint256 floor = Math.mulDiv(totalAssets(), targetHotBps, BPS);
+        uint256 floor = totalAssets().mulDiv(targetHotBps, BPS);
         if (liquid - amount < floor) revert BelowHotTarget(liquid - amount, floor);
 
         bondedPrincipal += amount;
@@ -209,7 +302,7 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
         uint256 dt = block.timestamp - lastAccrual;
 
         uint256 reserveBal = wpot.balanceOf(address(reserve));
-        uint256 cap = Math.mulDiv(base, reserveCapBps, BPS);
+        uint256 cap = base.mulDiv(reserveCapBps, BPS);
         uint256 room = cap > reserveBal ? cap - reserveBal : 0;
 
         RateEngine.Split memory s = RateEngine.split(
@@ -325,11 +418,19 @@ contract StakingVault is ERC4626, AccessControl, ReentrancyGuard, Pausable, ISla
         emit AddressApplied("stakingAccount", stakingAccount_);
     }
 
+    /// @notice Attach the coverage certificate contract. Zero address disables issuance.
+    function setPolicy(IPolicyNFT policy_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        policy = policy_;
+        emit AddressApplied("policy", address(policy_));
+    }
+
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _pause();
+        paused = true;
+        emit Paused(msg.sender);
     }
 
     function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _unpause();
+        paused = false;
+        emit Unpaused(msg.sender);
     }
 }

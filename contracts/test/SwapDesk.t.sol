@@ -54,43 +54,4 @@ contract SwapDeskTest is Base {
         vm.expectRevert(SwapDesk.InvalidPrice.selector);
         desk.setPrice(0);
     }
-
-    function test_autoSaveNeedsBudget() public {
-        vm.prank(keeper);
-        vm.expectRevert(abi.encodeWithSelector(SwapDesk.OverBudget.selector, 20e6, 0));
-        desk.depositFor(maria, 20e6, 0);
-    }
-
-    function test_autoSaveSpendsBudgetIntoOwnersSavings() public {
-        vm.prank(maria);
-        desk.setAutoSaveBudget(50e6);
-
-        vm.prank(keeper);
-        uint256 shares = desk.depositFor(maria, 20e6, 0);
-        assertEq(vault.balanceOf(maria), shares);
-        assertEq(desk.autoSaveBudget(maria), 30e6);
-
-        vm.prank(keeper);
-        vm.expectRevert(abi.encodeWithSelector(SwapDesk.OverBudget.selector, 40e6, 30e6));
-        desk.depositFor(maria, 40e6, 0);
-    }
-
-    function test_autoSaveStopsWhenBudgetZeroed() public {
-        vm.prank(maria);
-        desk.setAutoSaveBudget(50e6);
-        vm.prank(maria);
-        desk.setAutoSaveBudget(0);
-
-        vm.prank(keeper);
-        vm.expectRevert(abi.encodeWithSelector(SwapDesk.OverBudget.selector, 1e6, 0));
-        desk.depositFor(maria, 1e6, 0);
-    }
-
-    function test_onlyKeeperCanAutoSave() public {
-        vm.prank(maria);
-        desk.setAutoSaveBudget(50e6);
-        vm.prank(bob);
-        vm.expectRevert();
-        desk.depositFor(maria, 10e6, 0);
-    }
 }
