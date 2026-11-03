@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
-import type { Address, Abi } from "viem";
+import { zeroAddress, type Address, type Abi } from "viem";
 import { CheckCircle2, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "./primitives";
 import { TxLink } from "./ExplorerLink";
@@ -59,7 +59,8 @@ export function TxButton({ label, address, abi, functionName, args, value, disab
             ...(value !== undefined ? { value } : {}),
           })
         }
-        disabled={disabled || busy || !isConnected || done}
+        // A contract missing on this chain resolves to the zero address; a send there would burn the value.
+        disabled={disabled || busy || !isConnected || done || address === zeroAddress}
       >
         {busy ? (
           <>

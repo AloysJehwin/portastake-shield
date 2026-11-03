@@ -39,6 +39,7 @@ const CONTRACTS = [
   'OracleCommittee',
   'PolicyNFT',
   'MandateManager',
+  'TokenBridge',
 ];
 
 const STAGES = {
@@ -47,6 +48,7 @@ const STAGES = {
   'stage 3 (committee)': ['OracleCommittee'],
   'stage 4a (policy)': ['PolicyNFT'],
   'stage 4b (mandates)': ['MandateManager'],
+  'bridge (hub)': ['TokenBridge'],
 };
 
 function readBytecode(name) {
