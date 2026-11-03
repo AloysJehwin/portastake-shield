@@ -1,0 +1,17 @@
+{
+  "WPOT": "0x1d0c17a0ee1dcf15bd05a45ae789058a0586aa68",
+  "InsuranceFund": "0xc38070af7dd6fb4c4ae1c72b892dd662f6184cf6",
+  "StabilizationReserve": "0x655a38cf109b933a0b9a7ac5cf9b3afd4130c2fe",
+  "StakingVault": "0xa644743487409df1056445c742f5cdbfe156f417",
+  "tUSD": "0xca97a63d609d3efcd510387af4891d765740861e",
+  "SwapDesk": "0xc3439de80429265793325a6b662232043ced04b6",
+  "OracleCommittee": "0xb71a998bbd739821ea02e4ceee75ebb5ba5b9d20",
+  "chainId": 420420777,
+  "deployer": "0x2f1B730cCa78f039072Caa56B3E3Ee64319F510E",
+  "relayer": "0x2f1B730cCa78f039072Caa56B3E3Ee64319F510E",
+  "stakingAccount": "0x2f1B730cCa78f039072Caa56B3E3Ee64319F510E",
+  "PolicyNFT": "0xb902168a3314284ddd76bc42b8cb27b49edd2c39",
+  "MandateManager": "0x5bea4b9df4079612582a5cdc5a8d88a9c40ef339",
+  "xUSD": "0xdf02a2725479c7d3dae955716391ff9df633a3f0",
+  "XusdGateway": "0x112553f779e552e4dae037fc2fd6908fa56e0758"
+}

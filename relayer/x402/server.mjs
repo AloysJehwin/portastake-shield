@@ -1,83 +1,43 @@
-// Sample x402 paid API: live PortaStake vault stats, $0.01 in xUSD per request.
+// Sample x402 paid API, built on @portastake/sdk: live PortaStake vault stats, 0.01 xUSD per request.
 //
 //   cd relayer && PAY_TO=0x... node x402/server.mjs        (facilitator must be running)
 //
 // Unpaid requests get HTTP 402 with the payment requirements; requests carrying a valid signed
 // payment are answered and the payment is settled through the facilitator.
 import express from 'express';
-import { createPublicClient, http, parseAbi } from 'viem';
-import { paymentMiddleware, x402ResourceServer } from '@x402/express';
-import { ExactEvmScheme } from '@x402/evm/exact/server';
-import { HTTPFacilitatorClient } from '@x402/core/server';
-import { portaldot, RPC, NETWORK, XUSD, XUSD_DOMAIN, API_PORT, FACILITATOR_URL, deployments } from './config.mjs';
+import { formatEther } from 'viem';
+import { createPortaStake } from '@portastake/sdk/chain';
+import { xusdPaywall, x402Cors } from '@portastake/sdk/x402/server';
+import { RPC, API_PORT, FACILITATOR_URL, deployments } from './config.mjs';
 
 const payTo = process.env.PAY_TO ?? deployments.deployer;
-const PRICE = process.env.PRICE ?? '10000'; // 0.01 xUSD (6 decimals)
-
-const resourceServer = new x402ResourceServer(new HTTPFacilitatorClient({ url: FACILITATOR_URL }))
-  .register(NETWORK, new ExactEvmScheme());
+const PRICE = process.env.PRICE ?? '0.01'; // whole xUSD
+const ps = createPortaStake({ rpc: RPC });
 
 const app = express();
-
-// Browser clients (the PortaStake web app) need CORS, and must be able to read the x402 headers:
-// PAYMENT-REQUIRED on the 402, PAYMENT-RESPONSE on the paid reply; they send PAYMENT-SIGNATURE.
-const ORIGINS = (process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173').split(',');
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin && ORIGINS.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Vary', 'Origin');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, PAYMENT-SIGNATURE, X-PAYMENT, Access-Control-Expose-Headers');
-    res.setHeader('Access-Control-Expose-Headers', 'PAYMENT-REQUIRED, PAYMENT-RESPONSE, X-PAYMENT-RESPONSE');
-  }
-  if (req.method === 'OPTIONS') return res.sendStatus(204);
-  next();
-});
-
+// Browser clients (the PortaStake web app) need CORS and must be able to read the x402 headers.
+app.use(x402Cors((process.env.CORS_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173').split(',')));
 app.use(
-  paymentMiddleware(
-    {
-      'GET /api/vault-stats': {
-        accepts: [
-          {
-            scheme: 'exact',
-            network: NETWORK,
-            payTo,
-            price: { asset: XUSD, amount: PRICE, extra: XUSD_DOMAIN },
-            maxTimeoutSeconds: 120,
-          },
-        ],
-        description: 'Live PortaStake Shield vault stats on Portaldot V3',
-        mimeType: 'application/json',
-      },
+  xusdPaywall({
+    facilitatorUrl: FACILITATOR_URL,
+    routes: {
+      'GET /api/vault-stats': { price: PRICE, payTo, description: 'Live PortaStake Shield vault stats on Portaldot V3' },
     },
-    resourceServer,
-  ),
+  }),
 );
 
-const pub = createPublicClient({ chain: portaldot, transport: http(RPC) });
-const vaultAbi = parseAbi([
-  'function totalAssets() view returns (uint256)',
-  'function totalSupply() view returns (uint256)',
-  'function targetRateBps() view returns (uint256)',
-]);
-
 app.get('/api/vault-stats', async (_req, res) => {
-  const vault = deployments.StakingVault;
-  const [assets, supply, target] = await Promise.all(
-    ['totalAssets', 'totalSupply', 'targetRateBps'].map((fn) => pub.readContract({ address: vault, abi: vaultAbi, functionName: fn })),
-  );
+  const s = await ps.stats();
   res.json({
-    vault,
-    tvlPot: Number(assets) / 1e18,
-    stPotSupply: Number(supply) / 1e18,
-    targetRatePct: Number(target) / 100,
-    potPerStPot: supply > 0n ? Number(assets) / Number(supply) : 1,
+    vault: ps.addresses.StakingVault,
+    tvlPot: Number(formatEther(s.totalAssets)),
+    stPotSupply: Number(formatEther(s.totalSupply)),
+    targetRatePct: Number(s.targetRateBps) / 100,
+    potPerStPot: Number(formatEther(s.exchangeRate)),
     at: new Date().toISOString(),
   });
 });
 
 app.listen(API_PORT, () => {
-  console.log(`paid API → http://localhost:${API_PORT}/api/vault-stats  (${Number(PRICE) / 1e6} xUSD → ${payTo})`);
+  console.log(`paid API → http://localhost:${API_PORT}/api/vault-stats  (${PRICE} xUSD → ${payTo})`);
 });

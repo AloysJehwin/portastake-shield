@@ -10,6 +10,8 @@ npm start                # run every job
 npm start -- --only=price --once
 ```
 
+The x402 facilitator, sample tool, x402 client and mandate keeper (`x402/`, `scripts/run-mandates.mjs`) are built on [`@portastake/sdk`](../sdk/README.md).
+
 | Job | Every | What it does |
 |---|---|---|
 | `price` | 5 min | Reads the Native/7777 `assetConversion` pool and calls `SwapDesk.setPrice` when the feed is half way to stale or the pool moved 1%. Refuses jumps over 50% |
