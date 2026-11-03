@@ -10,8 +10,8 @@ export const portaldot = defineChain({
   },
   blockExplorers: {
     default: {
-      name: "Portaldot explorer",
-      url: "https://test-evm-rpc-v3.portaldot.dev",
+      name: "Portaldot V3 explorer",
+      url: "https://scanner-testnet-v3.portaldot.dev",
     },
   },
   testnet: true,

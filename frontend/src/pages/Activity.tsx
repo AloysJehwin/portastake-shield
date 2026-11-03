@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useAccount, usePublicClient } from "wagmi";
-import type { Log } from "viem";
+import type { Hash, Log } from "viem";
 import { parseAbiItem } from "viem";
 import { ArrowDownToLine, ArrowUpFromLine, ShieldAlert, Clock, Repeat } from "lucide-react";
 import { useProtocol } from "../hooks/useProtocol";
 import { formatUsd, formatPot, shortAddress } from "../format";
+import { TxLink } from "../components/ExplorerLink";
 import { EventRow } from "../components/EventRow";
 import { Card, Section, Empty } from "../components/primitives";
 
@@ -14,6 +15,7 @@ type Row = {
   title: string;
   detail?: string;
   blockNumber: bigint;
+  txHash: Hash;
 };
 
 const EVENTS = {
@@ -22,6 +24,12 @@ const EVENTS = {
   ),
   stableRedeemed: parseAbiItem(
     "event StableRedeemed(address indexed owner, address indexed receiver, uint256 shares, uint256 potOut, uint256 usdOut)",
+  ),
+  xusdDeposited: parseAbiItem(
+    "event DepositedXusd(address indexed payer, address indexed receiver, uint256 amount, uint256 shares)",
+  ),
+  xusdWithdrawn: parseAbiItem(
+    "event WithdrewToXusd(address indexed owner, address indexed receiver, uint256 shares, uint256 amount)",
   ),
   unstakeRequested: parseAbiItem(
     "event UnstakeRequested(uint256 indexed id, address indexed owner, address receiver, uint256 shares, uint256 assets)",
@@ -55,6 +63,28 @@ export function Activity() {
         const from = latest > 10_000n ? latest - 10_000n : 0n;
         const collected: Row[] = [];
 
+        // Deposits/withdrawals routed through the xUSD gateway: the desk sees the gateway as
+        // payer/owner, so read the gateway's own events and label those txs as xUSD.
+        const xusdDepositTxs = new Set<string>();
+        if (p.addresses.XusdGateway !== "0x0000000000000000000000000000000000000000") {
+          const [gd, gw] = await Promise.all([
+            client.getLogs({ address: p.addresses.XusdGateway, event: EVENTS.xusdDeposited, args: { receiver: address }, fromBlock: from, toBlock: latest }),
+            client.getLogs({ address: p.addresses.XusdGateway, event: EVENTS.xusdWithdrawn, args: { owner: address }, fromBlock: from, toBlock: latest }),
+          ]);
+          gd.forEach((l) => xusdDepositTxs.add(l.transactionHash));
+          for (const l of gw) {
+            const a = l.args as { shares: bigint; amount: bigint };
+            collected.push({
+              key: `${l.transactionHash}:${l.logIndex}`,
+              icon: <ArrowUpFromLine size={14} />,
+              title: `Redeemed ${formatPot(a.shares)} stPOT`,
+              detail: `Received ${formatUsd(a.amount)} xUSD`,
+              blockNumber: l.blockNumber ?? 0n,
+              txHash: l.transactionHash as Hash,
+            });
+          }
+        }
+
         if (p.addresses.SwapDesk !== "0x0000000000000000000000000000000000000000") {
           const [deposits, redeems] = await Promise.all([
             client.getLogs({
@@ -77,9 +107,10 @@ export function Activity() {
             collected.push({
               key: `${l.transactionHash}:${l.logIndex}`,
               icon: <ArrowDownToLine size={14} />,
-              title: `Deposited ${formatUsd(a.usdIn)} tUSD`,
+              title: `Deposited ${formatUsd(a.usdIn)} ${xusdDepositTxs.has(l.transactionHash) ? "xUSD" : "tUSD"}`,
               detail: `Received ${formatPot(a.shares)} stPOT`,
               blockNumber: l.blockNumber ?? 0n,
+              txHash: l.transactionHash as Hash,
             });
           }
           for (const l of redeems) {
@@ -90,6 +121,7 @@ export function Activity() {
               title: `Redeemed ${formatPot(a.shares)} stPOT`,
               detail: `Received ${formatUsd(a.usdOut)} tUSD`,
               blockNumber: l.blockNumber ?? 0n,
+              txHash: l.transactionHash as Hash,
             });
           }
         }
@@ -124,6 +156,7 @@ export function Activity() {
             title: `Requested unstake · ${formatPot(a.assets)} tPOT`,
             detail: `To ${shortAddress(a.receiver)} (${slowRouteCopy()})`,
             blockNumber: l.blockNumber ?? 0n,
+              txHash: l.transactionHash as Hash,
           });
         }
         for (const l of fulfilled as Log[]) {
@@ -134,6 +167,7 @@ export function Activity() {
             icon: <ArrowUpFromLine size={14} />,
             title: `Unstake fulfilled · ${formatPot(a.assets)} tPOT`,
             blockNumber: l.blockNumber ?? 0n,
+              txHash: l.transactionHash as Hash,
           });
         }
         for (const l of slashes as Log[]) {
@@ -144,6 +178,7 @@ export function Activity() {
             title: `Validator slashed · ${formatPot(a.amount)} tPOT`,
             detail: `Insurance covered ${formatPot(a.covered)} tPOT`,
             blockNumber: l.blockNumber ?? 0n,
+              txHash: l.transactionHash as Hash,
           });
         }
 
@@ -162,6 +197,7 @@ export function Activity() {
               title: `Mandate executed · ${formatUsd(a.usdAmount)} tUSD saved`,
               detail: `Minted ${formatPot(a.shares)} stPOT`,
               blockNumber: l.blockNumber ?? 0n,
+              txHash: l.transactionHash as Hash,
             });
           }
         }
@@ -178,7 +214,7 @@ export function Activity() {
     return () => {
       cancelled = true;
     };
-  }, [client, address, p.stages.core, p.addresses.StakingVault, p.addresses.SwapDesk, p.addresses.MandateManager]);
+  }, [client, address, p.stages.core, p.addresses.StakingVault, p.addresses.SwapDesk, p.addresses.MandateManager, p.addresses.XusdGateway]);
 
   if (!p.user) {
     return (
@@ -203,7 +239,13 @@ export function Activity() {
       ) : (
         <Card>
           {rows.map((r) => (
-            <EventRow key={r.key} icon={r.icon} title={r.title} detail={r.detail} timestamp={r.blockNumber} />
+            <EventRow
+              key={r.key}
+              icon={r.icon}
+              title={r.title}
+              detail={r.detail}
+              trailing={<TxLink hash={r.txHash} blockNumber={r.blockNumber} label={`#${r.blockNumber.toString()}`} />}
+            />
           ))}
         </Card>
       )}

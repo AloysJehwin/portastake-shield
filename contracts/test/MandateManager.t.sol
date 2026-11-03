@@ -166,42 +166,58 @@ contract MandateManagerTest is Base {
 
     // --- batch, failures, lifecycle -------------------------------------------
 
-    function test_batchAutoPausesAfterThreeFailures() public {
+    function test_failedRunLeavesMandateIntactAndRetryable() public {
         uint256 id = _create(_params(MandateManager.Direction.SAVE, MandateManager.Trigger.RECURRING));
         vm.prank(maria);
         usd.approve(address(mandates), 0); // revoke
 
-        uint256[] memory ids = new uint256[](1);
-        ids[0] = id;
-        for (uint256 i; i < 3; ++i) {
-            assertEq(mandates.executeBatch(ids), 0);
-        }
+        vm.prank(keeper);
+        vm.expectRevert();
+        mandates.execute(id);
         MandateManager.Mandate memory m = mandates.getMandate(id);
-        assertEq(m.fails, 3);
-        assertFalse(m.active);
+        assertEq(m.runs, 0); // reverted run changed nothing
+        assertTrue(m.active);
 
-        vm.startPrank(maria);
+        vm.prank(maria);
         usd.approve(address(mandates), type(uint256).max);
-        mandates.resumeMandate(id);
-        vm.stopPrank();
-        assertEq(mandates.executeBatch(ids), 1);
+        vm.prank(keeper);
+        mandates.execute(id);
+        assertEq(mandates.getMandate(id).runs, 1);
     }
 
-    function test_batchSkipsNotDueAndRunsOthers() public {
+    function test_keeperScanFindsOnlyDueMandates() public {
         uint256 a = _create(_params(MandateManager.Direction.SAVE, MandateManager.Trigger.RECURRING));
         MandateManager.MandateParams memory p = _params(MandateManager.Direction.SAVE, MandateManager.Trigger.SCHEDULED);
         p.start = uint64(block.timestamp + 1 days);
         uint256 b = _create(p);
 
-        (uint256[] memory due, uint256 next) = mandates.dueIds(0, 10);
-        assertEq(due.length, 1);
-        assertEq(due[0], a);
-        assertEq(next, 2);
+        // The keeper walks [0, nextId) with isDue, exactly as relayer/scripts/run-mandates.mjs does.
+        assertEq(mandates.nextId(), 2);
+        (bool dueA,) = mandates.isDue(a);
+        (bool dueB,) = mandates.isDue(b);
+        assertTrue(dueA);
+        assertFalse(dueB);
 
-        uint256[] memory ids = new uint256[](2);
-        (ids[0], ids[1]) = (a, b);
-        assertEq(mandates.executeBatch(ids), 1);
-        assertEq(mandates.getMandate(b).fails, 0);
+        vm.prank(keeper);
+        vm.expectRevert(abi.encodeWithSelector(MandateManager.NotDue.selector, b));
+        mandates.execute(b);
+    }
+
+    function test_pauseBlocksAndResumeRestores() public {
+        uint256 id = _create(_params(MandateManager.Direction.SAVE, MandateManager.Trigger.RECURRING));
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(MandateManager.NotOwner.selector, id));
+        mandates.pauseMandate(id);
+
+        vm.prank(maria);
+        mandates.pauseMandate(id);
+        (bool due,) = mandates.isDue(id);
+        assertFalse(due);
+
+        vm.prank(maria);
+        mandates.resumeMandate(id);
+        mandates.execute(id);
+        assertEq(mandates.getMandate(id).runs, 1);
     }
 
     function test_onlyOwnerCanCancelAndCancelDeletes() public {
@@ -234,13 +250,21 @@ contract MandateManagerTest is Base {
         MandateManager.MandateParams memory p = _params(MandateManager.Direction.SAVE, MandateManager.Trigger.RECURRING);
         p.interval = 0;
         vm.prank(maria);
-        vm.expectRevert(abi.encodeWithSelector(MandateManager.InvalidParams.selector, "interval"));
+        vm.expectRevert(abi.encodeWithSelector(MandateManager.InvalidParams.selector, uint8(3)));
+        mandates.create(p);
+
+        // A THRESHOLD top-up without a cooldown could be re-triggered in a loop by the payee.
+        p = _params(MandateManager.Direction.PAY, MandateManager.Trigger.THRESHOLD);
+        p.bound = 50e6;
+        p.interval = 0;
+        vm.prank(maria);
+        vm.expectRevert(abi.encodeWithSelector(MandateManager.InvalidParams.selector, uint8(3)));
         mandates.create(p);
 
         p = _params(MandateManager.Direction.PAY, MandateManager.Trigger.RECURRING);
         p.payee = address(0);
         vm.prank(maria);
-        vm.expectRevert(abi.encodeWithSelector(MandateManager.InvalidParams.selector, "payee"));
+        vm.expectRevert(abi.encodeWithSelector(MandateManager.InvalidParams.selector, uint8(7)));
         mandates.create(p);
     }
 

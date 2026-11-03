@@ -17,6 +17,10 @@ export type Deployment = {
   PolicyNFT: Address;
   MandateManager: Address;
   OracleCommittee: Address;
+  /** EIP-3009 stablecoin that x402 payments settle in. */
+  xUSD: Address;
+  /** Swaps xUSD in and out of savings through the SwapDesk. */
+  XusdGateway: Address;
 };
 
 const zero = "0x0000000000000000000000000000000000000000" as Address;
@@ -30,6 +34,8 @@ const empty: Deployment = {
   PolicyNFT: zero,
   MandateManager: zero,
   OracleCommittee: zero,
+  xUSD: zero,
+  XusdGateway: zero,
 };
 
 // The deployments live in `contracts/deployments/<chainId>.json`. `pnpm sync-abis`
@@ -40,8 +46,8 @@ import anvilJson from "./deployments/31337.json";
 import portaldotJson from "./deployments/420420777.json";
 
 export const deployments: Record<number, Deployment> = {
-  [anvil.id]: { ...empty, ...(anvilJson as Deployment) },
-  [portaldot.id]: { ...empty, ...(portaldotJson as Deployment) },
+  [anvil.id]: { ...empty, ...(anvilJson as unknown as Partial<Deployment>) },
+  [portaldot.id]: { ...empty, ...(portaldotJson as unknown as Partial<Deployment>) },
 };
 
 export function addressesFor(chainId: number): Deployment {

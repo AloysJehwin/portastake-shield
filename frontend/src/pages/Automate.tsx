@@ -6,6 +6,7 @@ import { useProtocol } from "../hooks/useProtocol";
 import { useAllowance } from "../hooks/useAllowance";
 import { formatUsd } from "../format";
 import { TxButton } from "../components/TxButton";
+import { WalletGate } from "../components/WalletGate";
 import { Button, Card, Section, Empty, GlassCard, KeyValue, Divider } from "../components/primitives";
 import { MandateManagerAbi } from "../abi/MandateManager";
 import { MockStableAbi } from "../abi/MockStable";
@@ -29,8 +30,8 @@ export function Automate() {
           </p>
           <Empty
             icon={<Repeat size={20} aria-hidden />}
-            title="On-chain automation deploys in stage 4"
-            hint="The MandateManager contract is cued up for the next tPOT top-up. In the meantime the relayer can keep your save rules."
+            title="Automation isn't live on this network yet"
+            hint="Once the MandateManager address is configured, your save and pay rules appear here."
           />
         </GlassCard>
       </Section>
@@ -38,10 +39,10 @@ export function Automate() {
   }
 
   return (
-    <>
+    <WalletGate action="set up save rules">
       <CreateMandate />
       <MyMandates />
-    </>
+    </WalletGate>
   );
 }
 

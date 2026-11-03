@@ -13,8 +13,13 @@
   "dependencies": {
     "@fontsource-variable/inter": "^5.1.1",
     "@fontsource/jetbrains-mono": "^5.1.2",
+    "@noble/hashes": "^2.4.0",
     "@rainbow-me/rainbowkit": "^2.2.4",
+    "@scure/base": "^2.4.0",
     "@tanstack/react-query": "^5.62.11",
+    "@x402/core": "2.29.0",
+    "@x402/evm": "2.29.0",
+    "@x402/fetch": "2.29.0",
     "lucide-react": "^0.469.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
