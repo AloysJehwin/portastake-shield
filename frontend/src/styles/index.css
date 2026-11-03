@@ -53,6 +53,18 @@
   button {
     @apply font-medium;
   }
+
+  /* Covers controls disabled directly and those inside a disabled <fieldset>
+     (WalletGate), so chips, inputs and text links grey out consistently. */
+  button:disabled,
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    @apply opacity-50 cursor-not-allowed;
+  }
+  button:disabled:hover {
+    text-decoration: none;
+  }
 }
 
 @layer components {
