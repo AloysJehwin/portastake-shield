@@ -53,10 +53,9 @@ contract DeployAll is Shared {
         vault.grantRole(vault.SLASHER_ROLE(), address(committee));
 
         // Stage 4 — extras
-        PolicyNFT policy = new PolicyNFT(c.deployer);
-        policy.grantRole(policy.MINTER_ROLE(), address(vault));
+        PolicyNFT policy = new PolicyNFT(address(vault));
         vault.setPolicy(policy);
-        MandateManager mandates = new MandateManager(usd, IERC4626(address(vault)), desk, c.deployer);
+        MandateManager mandates = new MandateManager(address(usd), IERC4626(address(vault)), desk);
 
         vm.stopBroadcast();
 

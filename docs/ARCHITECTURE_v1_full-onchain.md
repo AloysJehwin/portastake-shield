@@ -10,7 +10,7 @@ This document keeps the v1 design so it can be restored later, for example once 
 
 ## Overview
 
-Ten contracts on Portaldot V3's `pallet-revive` EVM (chain ID 420420777), all on OpenZeppelin v5.4.0, plus an off-chain relayer and attesters.
+Ten contracts on Portaldot V3's `pallet-revive` EVM (chain ID 420420777), all on OpenZeppelin v5.4.0, plus a relayer and attesters.
 
 ```
    ┌────────────────┐   ┌──────────────┐
