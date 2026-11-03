@@ -13,10 +13,10 @@ On the surface: deposit stablecoins, earn 8% a year (in POT), automate savings a
 
 | Piece | State |
 |---|---|
-| Smart contracts (`contracts/`) | ✅ 9 contracts built, size-optimized for revive; 55 tests pass (unit, fuzz, and invariant runs of ~8,200 random actions) |
-| Deploy script | ✅ Staged (`Deploy1Core` → `Deploy4Extras`), verified on a local chain and in a no-broadcast simulation against the live V3 RPC |
-| Testnet deployment | ⏳ Partially funded. First deployable set (stages 1–3) needs ~2,427 tPOT; stage 4 (PolicyNFT + MandateManager) adds ~1,100 more ([details](docs/ARCHITECTURE.md#deploy-cost--staged)) |
-| Relayer (`relayer/`) | 🚧 Chain probe done; staking bridge + keeper next |
+| Smart contracts (`contracts/`) | ✅ 9 contracts built, size-optimized for revive; 56 tests pass (unit, fuzz, and invariant runs of ~8,200 random actions) |
+| Deploy script | ✅ `scripts/deploy-cast.mjs` deploys stages 1–4 to V3 and is re-runnable (reuses anything already live). The staged `.s.sol` scripts are kept for local chains |
+| Testnet deployment | ✅ All four stages live on Portaldot V3 (addresses in `contracts/deployments/420420777.json`); stage 4 (PolicyNFT + MandateManager) cost ~540 tPOT ([details](docs/ARCHITECTURE.md#deploy-cost--staged)) |
+| Relayer (`relayer/`) | 🚧 Chain probe, mandate keeper and x402 facilitator done; staking bridge next |
 | Frontend (`frontend/`) | ✅ Vite + React + wagmi + RainbowKit; five pages (Home / Deposit / Withdraw / Automate / Activity); light theme with a glass nav; live-wired to the contracts, stage-aware |
 
 ## Quickstart
@@ -28,14 +28,14 @@ forge build
 forge test
 
 # Deploy to PortaldotV3 testnet (needs a funded EVM key in contracts/.env).
-# Staged — pay only for what you can afford right now; each stage merges into deployments/<chainId>.json.
-source .env
-forge script script/Deploy1Core.s.sol      --rpc-url portaldot --broadcast --legacy --slow   # ~1,452 tPOT
-forge script script/Deploy2Desk.s.sol      --rpc-url portaldot --broadcast --legacy --slow   # +~690
-forge script script/Deploy3Committee.s.sol --rpc-url portaldot --broadcast --legacy --slow   # +~285 (cumulative ~2,427)
-# Stage 4 is opt-in and deferable until the tPOT budget allows it:
-WITH_POLICY=1   forge script script/Deploy4Extras.s.sol --rpc-url portaldot --broadcast --legacy --slow  # +~463
-WITH_MANDATES=1 forge script script/Deploy4Extras.s.sol --rpc-url portaldot --broadcast --legacy --slow  # +~633
+# revive folds its storage deposit into gas, which `forge script` under-estimates, so deploys go
+# through `cast send` (node-side estimateGas). Re-runnable: anything already live is reused.
+set -a && . ./.env && set +a
+node ../scripts/deploy-cast.mjs                 # stages 1-4, writes deployments/<chainId>.json
+SKIP_STAGE4=1 node ../scripts/deploy-cast.mjs   # stop after stage 3
+
+# Run due save/pay mandates once (or LOOP_SECS=60 to keep going)
+(cd ../relayer && PRIVATE_KEY=$PRIVATE_KEY npm run run-mandates)
 
 # How much tPOT is on this key? (never leaves the shell)
 ../scripts/check-balance.sh
@@ -92,7 +92,7 @@ Mobile-first, one screen, no crypto jargon in the main flow.
 └───────────────────────────────────────────────┘
 ```
 
-Tap Deposit and pay with stablecoins. The app swaps them to POT, deposits into the vault, mints stPOT, and the relayer issues her coverage certificate: a locked NFT in Portaldot's native `Nfts` pallet. The yield shown is already net of the insurance split, so there's no mental math.
+Tap Deposit and pay with stablecoins. The app swaps them to POT, deposits into the vault, mints stPOT, and the vault issues her coverage certificate: a soulbound `PolicyNFT` (ERC-721 + ERC-5192) recording the terms she joined under. The yield shown is already net of the insurance split, so there's no mental math.
 
 The 8% is in POT terms. The balance is displayed in USD, and the app says plainly that the USD value moves with the POT price. Insurance covers slashing, not price.
 
@@ -105,7 +105,7 @@ Saving runs on its own. Payments are prepared for her and go out with one tap:
 | **Save** (wallet → savings), automatic | "Save $20 every Friday" | "Save $500 on the 1st" | "Keep $500 in my wallet, save the rest" |
 | **Pay** (savings → anyone), one-tap | "Pay rent $300 monthly" | "Pay $100 on Dec 3" | "Never let my wallet drop below $100" |
 
-The rules live in the relayer (per-run cap, run limit, expiry, slippage, pause and cancel, auto-pause after 3 failures). On-chain, automation can only move her tUSD into **her own** savings, and only up to an auto-save budget she sets on `SwapDesk` (0 stops it). Pay rules arrive as a reminder with the payment pre-filled, and she approves it.
+Every rule is enforced by `MandateManager`: per-run cap, run limit, expiry, threshold bound and cooldown, slippage floor, pause and cancel, and no burst catch-up after downtime. Authority is just her allowance to the contract (tUSD for save, stPOT for pay), so revoking it or cancelling stops everything, and a keeper can only ever move what her own mandate allows.
 
 ---
 
@@ -119,20 +119,23 @@ The user holds stablecoins, not POT. In one tx, `SwapDesk.depositWithStable`:
 
 1. Swaps tUSD → POT at the desk's price feed. The relayer feeds that price from the native tPOT/pUSD `assetConversion` pool, and swaps stop if it goes stale.
 2. Calls `StakingVault.deposit` → mints stPOT to the user.
-3. The relayer sees the vault's `Deposit` event and mints a locked policy NFT in the native `Nfts` pallet on her first deposit. It records the terms in force (target rate, insurance share) and costs no EVM code.
+3. On her first deposit the vault mints her soulbound `PolicyNFT`, recording the terms in force (target rate, insurance share) in its `TermsSnapshot` event.
 
 Withdraw reverses the flow: `redeemToStable` burns stPOT and draws from the 10% hot reserve. It then swaps POT → tUSD and sends it to any address. Large exits queue an unbond instead (~168 days on testnet).
 
 Why a desk rather than a DEX: Portaldot's `pUSD` lives in `pallet-assets` and has no ERC-20 precompile on the EVM. The EVM side therefore uses a `tUSD` test token and an inventory desk until a DEX is reachable from Solidity.
 
-Automation uses the same path. The EVM has no cron, so the relayer acts as keeper: it evaluates the rules and calls `SwapDesk.depositFor`, which only works within the user's auto-save budget and always credits the user.
+Automation uses the same path. The EVM has no cron, so `MandateManager.execute` is permissionless and the relayer acts as keeper: it scans mandates with the `isDue` view and calls `execute(id)` for each due one. The contract checks every rule before moving funds, and savings always credit the owner.
 
 ### Layer 1 — EVM contracts (money)
 
 Standard Solidity on Portaldot V3's `pallet-revive` EVM (Chain ID 420420777). No exotic primitives.
 
 ```
-  relayer (keeper) ── depositFor ──▶ ┌──────────────────┐
+  MandateManager ◀── execute(id) ── relayer (keeper)
+        │ depositWithStable / redeemToStable
+        ▼
+                                     ┌──────────────────┐
   relayer (feeder) ── setPrice ────▶ │    SwapDesk      │
                                      │ tUSD ⇄ POT, feed │
                                      └────────┬─────────┘
@@ -144,10 +147,10 @@ Standard Solidity on Portaldot V3's `pallet-revive` EVM (Chain ID 420420777). No
                     └──┬────────┬───────┬──┘
                        │        │       │  RateEngine splits each era's reward R
                        ▼        ▼       ▼
-     Deposit event   ┌──────────────┐ ┌──────────────────────┐
-     → relayer mints │ InsuranceFund│ │ StabilizationReserve │
-     native policy   │ pays slashes │ │ tops up a short era  │
-     NFT (Nfts)      └──────────────┘ └──────────────────────┘
+     first deposit   ┌──────────────┐ ┌──────────────────────┐
+     → vault mints   │ InsuranceFund│ │ StabilizationReserve │
+     soulbound       │ pays slashes │ │ tops up a short era  │
+     PolicyNFT       └──────────────┘ └──────────────────────┘
 ```
 
 **The 8% engine.** Once per era (6h) the relayer returns the staking reward `R` via `StakingVault.notifyReward`, and `RateEngine` splits it:
@@ -224,7 +227,7 @@ Attestation is permissionless — anyone can bond stPOT and run an attester. Dis
     │                      │ swap USDC→POT            │                │
     │                      │ deposit POT ────────────▶│─ bond+nominate ▶│
     │◀── 100 stPOT ────────│                          │                │
-    │◀── policy NFT ───────│──────────────────────────│ (Nfts pallet)  │
+    │◀── policy NFT ───────│ (vault mints PolicyNFT)  │                │
     │                      │                          │◀─ Rewarded 8 ──│
     │                      │◀── notifyReward(8) ──────│                │
     │                      │ 1.2 → InsuranceFund      │                │
@@ -249,16 +252,17 @@ Maria never touched Substrate. She never heard "slashing." She never typed "bond
 
 | Piece | What it is | Why it exists for Maria | State |
 |---|---|---|---|
-| **SwapDesk** | One-tx stablecoin → POT → stPOT and back, with the POT/USD feed and the auto-save budget | She never touches POT; saving runs itself | ✅ |
+| **SwapDesk** | One-tx stablecoin → POT → stPOT and back, with the POT/USD feed | She never touches POT | ✅ |
 | **StakingVault** | ERC-4626 over WPOT, mints stPOT, 10% hot reserve, reward streaming | Deposits earn yield; small withdrawals are instant | ✅ |
 | **RateEngine** | Library: the reserve-backed 8% split | A steady, predictable rate | ✅ |
 | **StabilizationReserve** | Pot of surplus yield, capped at 10% of TVL | Tops up eras that pay less than 8% | ✅ |
 | **InsuranceFund** | Pot funded by the yield split, pays slashing losses | A misbehaving validator never dents her balance | ✅ |
 | **OracleCommittee** | N-of-M ECDSA attesters | Proves Substrate slashing events to the EVM | ✅ (bonding later) |
 | **WPOT**, **tUSD** | Wrapped tPOT, test stablecoin | Plumbing for the above | ✅ |
-| **Policy NFT** | Locked NFT in the native `Nfts` pallet, minted by the relayer on first deposit | Her coverage certificate | 🚧 relayer |
-| **Automation rules** | Save / pay rules evaluated by the relayer | Savings run themselves; bills are one tap | 🚧 relayer |
-| **Relayer** | TypeScript daemon, SS58 key + EVM key | Bonds POT, reports rewards, feeds price, runs automation, mints policy NFTs | 🚧 |
+| **xUSD + x402** | EIP-3009 test stablecoin, facilitator and sample paid API (`relayer/x402/`) | Pay-per-request APIs settle on Portaldot | ✅ |
+| **PolicyNFT** | Soulbound ERC-721 + ERC-5192, minted by the vault on first deposit, terms recorded in `TermsSnapshot` | Her coverage certificate | ✅ |
+| **MandateManager** | Save / pay mandates (recurring, scheduled, threshold) with caps, expiry, cooldown and slippage floors; permissionless `execute` | Savings run themselves; bills pay themselves | ✅ |
+| **Relayer** | TypeScript daemon, SS58 key + EVM key | Bonds POT, reports rewards, feeds price, keeps mandates running | 🚧 |
 | **Attester daemon** | Opt-in TS daemon, signs slashing events | Decentralizes the oracle | 🚧 |
 | **Governance (veSTPOT)** | Time-locked stPOT, 24h parameter timelock | Community picks validators, sets insurance % | Later |
 | **MiniLend** | stPOT-collateralized POT loan pool | Composability demo: stPOT works elsewhere | Later |
@@ -292,7 +296,7 @@ If this ships, three real things change:
 - **Decimals**: 14 on Substrate, 18 on EVM (`nativeToEthRatio = 10000`). No `DecimalsOracle` needed.
 - **Yield**: ~25% gross staking APY funds the reserve-backed 8% target. See `docs/ARCHITECTURE.md`.
 - **Unbonding**: 672 eras ≈ 168 days, so instant withdrawals come from the hot reserve.
-- **Deploy cost**: revive accepts plain solc bytecode, but charges ~0.06 tPOT per byte of stored code (plus a ~30% code-hash lockup on instantiation and the storage slots written at wiring). The suite is deployed in four stages so you only pay for what you can afford right now. The core earning flow + stablecoin on-ramp + slash committee costs ~2,427 tPOT (stages 1–3); the on-chain certificate NFT and the save/pay automation add ~1,100 more in stage 4. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#deploy-cost--staged).
+- **Deploy cost**: revive accepts plain solc bytecode, but charges ~0.06 tPOT per byte of stored code (plus a ~30% code-hash lockup on instantiation and the storage slots written at wiring). The suite is deployed in four stages so you only pay for what you can afford right now: the core earning flow, stablecoin on-ramp and slash committee (stages 1–3), then the certificate NFT and save/pay automation (stage 4, ~540 tPOT after trimming both contracts to the essentials). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#deploy-cost--staged).
 - **Testnet POT** comes from the Portaldot team via a ticket in the Discord `#open-ticket` channel (native `5…` address + registration proof).
 
 ---

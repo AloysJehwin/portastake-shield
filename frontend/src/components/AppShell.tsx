@@ -1,6 +1,6 @@
 import { type ReactNode } from "react";
 import { NavLink } from "react-router-dom";
-import { Home, ArrowDownToLine, ArrowUpFromLine, Repeat, History, Shield } from "lucide-react";
+import { Home, ArrowDownToLine, ArrowUpFromLine, Repeat, History, Shield, Zap } from "lucide-react";
 import { WalletButton } from "./WalletButton";
 
 const NAV = [
@@ -8,6 +8,7 @@ const NAV = [
   { to: "/deposit", label: "Deposit", icon: ArrowDownToLine },
   { to: "/withdraw", label: "Withdraw", icon: ArrowUpFromLine },
   { to: "/automate", label: "Automate", icon: Repeat },
+  { to: "/pay-per-use", label: "Pay per use", icon: Zap },
   { to: "/activity", label: "Activity", icon: History },
 ] as const;
 
