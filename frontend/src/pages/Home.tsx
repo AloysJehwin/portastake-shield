@@ -25,6 +25,8 @@ import { GaugeArc } from "../components/GaugeArc";
 import { LineChart } from "../components/LineChart";
 import { BarChart } from "../components/BarChart";
 import { Heatmap } from "../components/Heatmap";
+import { AddressLink } from "../components/ExplorerLink";
+import { isDeployed, type Deployment } from "../addresses";
 import { GlassCard, Section, Card, KeyValue, Empty } from "../components/primitives";
 
 const ERA_SECS = 6 * 3600;
@@ -370,9 +372,35 @@ export function Home() {
           />
         </Card>
       </Section>
+
+      <Section title="Contracts on Portaldot">
+        <Card>
+          <div className="grid gap-x-8 sm:grid-cols-2">
+            {CONTRACTS.filter(([key]) => isDeployed(p.addresses[key])).map(([key, label]) => (
+              <div key={key} className="flex items-center justify-between gap-4 py-2">
+                <span className="text-sm text-fg-muted">{label}</span>
+                <AddressLink address={p.addresses[key]} />
+              </div>
+            ))}
+          </div>
+        </Card>
+      </Section>
     </>
   );
 }
+
+const CONTRACTS: [keyof Deployment, string][] = [
+  ["StakingVault", "Staking vault (stPOT)"],
+  ["SwapDesk", "Swap desk"],
+  ["InsuranceFund", "Insurance fund"],
+  ["StabilizationReserve", "Stabilization reserve"],
+  ["OracleCommittee", "Oracle committee"],
+  ["PolicyNFT", "Policy certificate"],
+  ["MandateManager", "Mandates"],
+  ["WPOT", "WPOT"],
+  ["tUSD", "tUSD"],
+  ["xUSD", "xUSD (x402)"],
+];
 
 function HealthRow({
   dot,
