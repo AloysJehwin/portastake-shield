@@ -3,10 +3,11 @@ import { maxUint256, parseUnits, type Address } from "viem";
 import { useAccount, useChainId, useReadContract, useReadContracts } from "wagmi";
 import { useProtocol } from "../hooks/useProtocol";
 import { useAllowance } from "../hooks/useAllowance";
-import { formatPot, formatUsd, applyFee, shortAddress } from "../format";
+import { formatPot, formatUsd, applyFee } from "../format";
 import { AmountInput } from "../components/AmountInput";
 import { SlippageControl } from "../components/SlippageControl";
 import { TxButton } from "../components/TxButton";
+import { AddressLink } from "../components/ExplorerLink";
 import { WalletGate } from "../components/WalletGate";
 import { GlassCard, Card, Section, KeyValue, Divider, Empty } from "../components/primitives";
 import { SwapDeskAbi } from "../abi/SwapDesk";
@@ -172,7 +173,7 @@ function PendingUnstakes({ vault }: { vault: Address }) {
               <span className={row![1] ? "chip-success" : "chip"}>
                 {row![1] ? "Fulfilled" : "Pending"}
               </span>
-              <span className="text-xs text-fg-subtle num">→ {shortAddress(row![0])}</span>
+              <span className="text-xs text-fg-subtle">→ <AddressLink address={row![0]} /></span>
             </div>
           ))}
         </Card>

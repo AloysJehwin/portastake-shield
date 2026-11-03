@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { useAccount, usePublicClient } from "wagmi";
-import type { Log } from "viem";
+import type { Hash, Log } from "viem";
 import { parseAbiItem } from "viem";
 import { ArrowDownToLine, ArrowUpFromLine, ShieldAlert, Clock, Repeat } from "lucide-react";
 import { useProtocol } from "../hooks/useProtocol";
 import { formatUsd, formatPot, shortAddress } from "../format";
+import { TxLink } from "../components/ExplorerLink";
 import { EventRow } from "../components/EventRow";
 import { Card, Section, Empty } from "../components/primitives";
 
@@ -14,6 +15,7 @@ type Row = {
   title: string;
   detail?: string;
   blockNumber: bigint;
+  txHash: Hash;
 };
 
 const EVENTS = {
@@ -80,6 +82,7 @@ export function Activity() {
               title: `Deposited ${formatUsd(a.usdIn)} tUSD`,
               detail: `Received ${formatPot(a.shares)} stPOT`,
               blockNumber: l.blockNumber ?? 0n,
+              txHash: l.transactionHash as Hash,
             });
           }
           for (const l of redeems) {
@@ -90,6 +93,7 @@ export function Activity() {
               title: `Redeemed ${formatPot(a.shares)} stPOT`,
               detail: `Received ${formatUsd(a.usdOut)} tUSD`,
               blockNumber: l.blockNumber ?? 0n,
+              txHash: l.transactionHash as Hash,
             });
           }
         }
@@ -124,6 +128,7 @@ export function Activity() {
             title: `Requested unstake · ${formatPot(a.assets)} tPOT`,
             detail: `To ${shortAddress(a.receiver)} (${slowRouteCopy()})`,
             blockNumber: l.blockNumber ?? 0n,
+              txHash: l.transactionHash as Hash,
           });
         }
         for (const l of fulfilled as Log[]) {
@@ -134,6 +139,7 @@ export function Activity() {
             icon: <ArrowUpFromLine size={14} />,
             title: `Unstake fulfilled · ${formatPot(a.assets)} tPOT`,
             blockNumber: l.blockNumber ?? 0n,
+              txHash: l.transactionHash as Hash,
           });
         }
         for (const l of slashes as Log[]) {
@@ -144,6 +150,7 @@ export function Activity() {
             title: `Validator slashed · ${formatPot(a.amount)} tPOT`,
             detail: `Insurance covered ${formatPot(a.covered)} tPOT`,
             blockNumber: l.blockNumber ?? 0n,
+              txHash: l.transactionHash as Hash,
           });
         }
 
@@ -162,6 +169,7 @@ export function Activity() {
               title: `Mandate executed · ${formatUsd(a.usdAmount)} tUSD saved`,
               detail: `Minted ${formatPot(a.shares)} stPOT`,
               blockNumber: l.blockNumber ?? 0n,
+              txHash: l.transactionHash as Hash,
             });
           }
         }
@@ -203,7 +211,13 @@ export function Activity() {
       ) : (
         <Card>
           {rows.map((r) => (
-            <EventRow key={r.key} icon={r.icon} title={r.title} detail={r.detail} timestamp={r.blockNumber} />
+            <EventRow
+              key={r.key}
+              icon={r.icon}
+              title={r.title}
+              detail={r.detail}
+              trailing={<TxLink hash={r.txHash} blockNumber={r.blockNumber} label={`#${r.blockNumber.toString()}`} />}
+            />
           ))}
         </Card>
       )}

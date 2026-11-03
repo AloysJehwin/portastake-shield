@@ -9,9 +9,10 @@ import { useProtocol } from "../hooks/useProtocol";
 import { useX402Payments } from "../hooks/useX402Payments";
 import { X402DollarAbi } from "../abi/X402Dollar";
 import { TxButton } from "../components/TxButton";
+import { TxLink, AddressLink } from "../components/ExplorerLink";
 import { WalletGate } from "../components/WalletGate";
 import { GlassCard, Card, Section, KeyValue, Divider, Empty, Button } from "../components/primitives";
-import { formatUsd, shortAddress, timeAgo } from "../format";
+import { formatUsd, timeAgo } from "../format";
 
 const API_URL = (import.meta.env.VITE_X402_API_URL as string | undefined) ?? "http://localhost:4021";
 const ENDPOINT = `${API_URL}/api/vault-stats`;
@@ -178,7 +179,7 @@ export function PayPerUse() {
           ) : (
             <>
               <KeyValue label="Price" value={offer ? `${formatUsd(offer.amount, 4)} xUSD` : "…"} hint="per request" />
-              <KeyValue label="Paid to" value={offer ? shortAddress(offer.payTo) : "…"} />
+              <KeyValue label="Paid to" value={offer ? <AddressLink address={offer.payTo} /> : "…"} />
             </>
           )}
 
@@ -208,7 +209,7 @@ export function PayPerUse() {
             <div className="mt-5">
               <div className="flex items-center gap-2 text-sm text-success mb-2">
                 <CheckCircle2 size={14} aria-hidden /> Paid and delivered
-                {settleTx && <span className="text-xs text-fg-subtle num">· tx {shortAddress(settleTx, 6)}</span>}
+                {settleTx && <TxLink hash={settleTx as `0x${string}`} label="View settlement on explorer" />}
               </div>
               <pre className="num text-xs bg-bg border border-line rounded-sm p-3 overflow-x-auto">
                 {JSON.stringify(result, null, 2)}
@@ -230,8 +231,8 @@ export function PayPerUse() {
             {history.data.map((h) => (
               <div key={h.txHash} className="flex items-center justify-between gap-3 py-2 border-b border-line last:border-b-0 text-sm">
                 <span className="num text-fg">{formatUsd(h.amount, 4)} xUSD</span>
-                <span className="text-xs text-fg-muted num">→ {shortAddress(h.to)}</span>
-                <span className="text-xs text-fg-subtle num">{shortAddress(h.txHash, 6)}</span>
+                <span className="text-xs text-fg-muted">→ <AddressLink address={h.to} /></span>
+                <TxLink hash={h.txHash} blockNumber={h.blockNumber} />
                 <span className="text-xs text-fg-subtle">{h.timestamp ? timeAgo(h.timestamp) : `#${h.blockNumber}`}</span>
               </div>
             ))}
