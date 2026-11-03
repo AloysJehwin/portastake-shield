@@ -7,6 +7,7 @@ import { formatPot, formatUsd, applyFee, shortAddress } from "../format";
 import { AmountInput } from "../components/AmountInput";
 import { SlippageControl } from "../components/SlippageControl";
 import { TxButton } from "../components/TxButton";
+import { WalletGate } from "../components/WalletGate";
 import { GlassCard, Card, Section, KeyValue, Divider, Empty } from "../components/primitives";
 import { SwapDeskAbi } from "../abi/SwapDesk";
 import { StakingVaultAbi } from "../abi/StakingVault";
@@ -44,7 +45,7 @@ export function Withdraw() {
   const slow = parsed > maxInstantShares;
 
   return (
-    <>
+    <WalletGate action="withdraw">
       <Section>
         <GlassCard>
           <h1 className="text-lg text-fg mb-1">Withdraw</h1>
@@ -123,7 +124,7 @@ export function Withdraw() {
       </Section>
 
       <PendingUnstakes vault={p.addresses.StakingVault} />
-    </>
+    </WalletGate>
   );
 }
 

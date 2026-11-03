@@ -6,6 +6,7 @@ import { formatPot, formatUsd, applyFee, timeAgo } from "../format";
 import { AmountInput } from "../components/AmountInput";
 import { SlippageControl } from "../components/SlippageControl";
 import { TxButton } from "../components/TxButton";
+import { WalletGate } from "../components/WalletGate";
 import { GlassCard, Card, Section, KeyValue, Divider } from "../components/primitives";
 import { MockStableAbi } from "../abi/MockStable";
 import { SwapDeskAbi } from "../abi/SwapDesk";
@@ -55,7 +56,7 @@ export function Deposit() {
     BigInt(now) > p.desk.updatedAt + p.desk.maxAge;
 
   return (
-    <>
+    <WalletGate action="deposit">
       <Section>
         <GlassCard>
           <h1 className="text-lg text-fg mb-1">Deposit</h1>
@@ -173,6 +174,6 @@ export function Deposit() {
           </Card>
         </Section>
       )}
-    </>
+    </WalletGate>
   );
 }
