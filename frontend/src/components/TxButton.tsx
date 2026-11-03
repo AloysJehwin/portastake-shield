@@ -3,6 +3,7 @@ import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagm
 import type { Address, Abi } from "viem";
 import { CheckCircle2, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "./primitives";
+import { TxLink } from "./ExplorerLink";
 
 type Props = {
   label: string;
@@ -18,12 +19,17 @@ type Props = {
 
 /**
  * Wraps `useWriteContract` with a consistent idle → mining → confirmed → reverted
- * lifecycle so pages stop re-implementing it. Shows the latest tx hash truncated.
+ * lifecycle so pages stop re-implementing it. Once submitted, links the tx on the explorer.
  */
 export function TxButton({ label, address, abi, functionName, args, value, disabled, onSuccess }: Props) {
   const { isConnected } = useAccount();
   const { writeContract, data: hash, isPending, reset, error } = useWriteContract();
-  const { isLoading: mining, isSuccess: confirmed } = useWaitForTransactionReceipt({ hash });
+  const { data: receipt, isLoading: mining, isSuccess: confirmed } = useWaitForTransactionReceipt({ hash });
+  // Keep the last tx link visible after the button resets for the next tx.
+  const [lastHash, setLastHash] = useState<`0x${string}` | undefined>();
+  useEffect(() => {
+    if (hash) setLastHash(hash);
+  }, [hash]);
   const [done, setDone] = useState(false);
 
   useEffect(() => {
@@ -68,6 +74,12 @@ export function TxButton({ label, address, abi, functionName, args, value, disab
           label
         )}
       </Button>
+      {lastHash && (
+        <div className="flex items-center gap-2 text-xs text-fg-subtle">
+          <span>{mining ? "Pending" : confirmed ? "Confirmed" : "Submitted"}</span>
+          <TxLink hash={lastHash} blockNumber={hash === lastHash ? receipt?.blockNumber : undefined} label="View on explorer" />
+        </div>
+      )}
       {error && (
         <div className="flex items-start gap-2 text-xs text-danger">
           <AlertCircle size={14} className="mt-0.5" aria-hidden />

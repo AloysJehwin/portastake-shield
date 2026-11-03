@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 
 import {ISwapDesk} from "./interfaces/Interfaces.sol";
+
+/// @dev The ERC-20 surface MandateManager reads (balances only; moves go through SafeTransferLib).
+interface IBalanceOf {
+    function balanceOf(address) external view returns (uint256);
+}
 
 /// @title MandateManager
 /// @notice Standing instructions over a user's savings, in both directions:
@@ -17,11 +18,18 @@ import {ISwapDesk} from "./interfaces/Interfaces.sol";
 ///   SAVE  wallet tUSD -> stPOT every N s   once at nextRun         wallet > bound: sweep the excess
 ///   PAY   stPOT -> tUSD to payee every N s once at nextRun         payee < bound: top up the gap
 ///
-/// There is no on-chain cron in the revive EVM, so `execute`/`executeBatch` are permissionless and
-/// the relayer runs as keeper. Authority comes from the owner's allowances to this contract:
-/// tUSD for SAVE, stPOT shares for PAY. Amounts are always in tUSD (the user thinks in dollars).
-contract MandateManager is AccessControl, ReentrancyGuard, Pausable {
-    using SafeERC20 for IERC20;
+/// The revive EVM has no native cron, so `execute` is permissionless and the relayer acts as keeper:
+/// it walks ids `[0, nextId)` with the `isDue` view and calls `execute(id)` for each due mandate.
+/// Every rule the keeper relies on — due time, cooldown, run cap, expiry, threshold bound, slippage
+/// floor — is enforced here, so a keeper can only ever move what the owner's own mandate allows.
+/// Authority comes from the owner's allowances to this contract: tUSD for SAVE, stPOT shares for PAY.
+/// Amounts are always in tUSD (the user thinks in dollars).
+///
+/// Size note: revive charges a storage deposit per byte of deployed code, so this contract carries
+/// no admin role or global pause, uses a 1-slot reentrancy guard, Solady's SafeTransferLib, and
+/// numeric error codes instead of revert strings.
+contract MandateManager {
+    using SafeTransferLib for address;
 
     enum Direction {
         SAVE,
@@ -42,7 +50,6 @@ contract MandateManager is AccessControl, ReentrancyGuard, Pausable {
         Direction dir;
         Trigger trig;
         bool active;
-        uint8 fails;
         // slot 2
         address payee;
         uint32 interval; // RECURRING period, or THRESHOLD cooldown
@@ -68,56 +75,65 @@ contract MandateManager is AccessControl, ReentrancyGuard, Pausable {
         uint16 maxSlippageBps;
     }
 
-    uint256 public constant BPS = 10_000;
-    uint8 public constant MAX_FAILS = 3;
-    uint16 public constant MAX_SLIPPAGE_BPS = 500;
+    // InvalidParams codes.
+    uint8 internal constant BAD_AMOUNT = 1;
+    uint8 internal constant BAD_SLIPPAGE = 2;
+    uint8 internal constant BAD_INTERVAL = 3;
+    uint8 internal constant BAD_START = 4;
+    uint8 internal constant BAD_BOUND = 5;
+    uint8 internal constant BAD_EXPIRY = 6;
+    uint8 internal constant BAD_PAYEE = 7;
 
-    IERC20 public immutable stable;
+    uint256 internal constant BPS = 10_000;
+    uint16 internal constant MAX_SLIPPAGE_BPS = 500;
+
+    address public immutable stable;
     IERC4626 public immutable vault;
     ISwapDesk public immutable desk;
 
     uint256 public nextId;
     mapping(uint256 => Mandate) internal mandates;
+    uint256 private _entered;
 
     event MandateCreated(
         uint256 indexed id, address indexed owner, Direction dir, Trigger trig, address payee, uint256 amount
     );
     event MandateExecuted(uint256 indexed id, uint256 usdAmount, uint256 shares, uint32 runs, uint64 nextRun);
-    event MandateFailed(uint256 indexed id, bytes reason);
-    event MandatePaused(uint256 indexed id, bool auto_);
+    event MandatePaused(uint256 indexed id);
     event MandateResumed(uint256 indexed id);
     event MandateCancelled(uint256 indexed id);
 
     error NotOwner(uint256 id);
     error NotDue(uint256 id);
-    error InvalidParams(string why);
+    error InvalidParams(uint8 code);
     error UnknownMandate(uint256 id);
-    error OnlySelf();
+    error Reentrant();
 
-    constructor(IERC20 stable_, IERC4626 vault_, ISwapDesk desk_, address admin) {
+    constructor(address stable_, IERC4626 vault_, ISwapDesk desk_) {
         stable = stable_;
         vault = vault_;
         desk = desk_;
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
     }
 
     // ---------------------------------------------------------------------
     // Owner actions
     // ---------------------------------------------------------------------
 
-    function create(MandateParams calldata p) external whenNotPaused returns (uint256 id) {
-        if (p.amount == 0) revert InvalidParams("amount");
-        if (p.maxSlippageBps > MAX_SLIPPAGE_BPS) revert InvalidParams("slippage");
-        if (p.trig == Trigger.RECURRING && p.interval == 0) revert InvalidParams("interval");
-        if (p.trig == Trigger.SCHEDULED && p.start < block.timestamp) revert InvalidParams("start");
-        if (p.trig == Trigger.THRESHOLD && p.dir == Direction.SAVE && p.bound == 0) revert InvalidParams("bound");
-        if (p.expiry != 0 && p.expiry <= block.timestamp) revert InvalidParams("expiry");
+    function create(MandateParams calldata p) external returns (uint256 id) {
+        if (p.amount == 0) revert InvalidParams(BAD_AMOUNT);
+        if (p.maxSlippageBps > MAX_SLIPPAGE_BPS) revert InvalidParams(BAD_SLIPPAGE);
+        // RECURRING needs a period; THRESHOLD needs a cooldown, or a payee that controls its own
+        // balance could re-trigger the top-up repeatedly inside one transaction.
+        if (p.trig != Trigger.SCHEDULED && p.interval == 0) revert InvalidParams(BAD_INTERVAL);
+        if (p.trig == Trigger.SCHEDULED && p.start < block.timestamp) revert InvalidParams(BAD_START);
+        if (p.trig == Trigger.THRESHOLD && p.dir == Direction.SAVE && p.bound == 0) revert InvalidParams(BAD_BOUND);
+        if (p.expiry != 0 && p.expiry <= block.timestamp) revert InvalidParams(BAD_EXPIRY);
 
         address payee = p.payee;
         if (p.dir == Direction.SAVE) {
             payee = msg.sender; // savings always accrue to the owner
         } else if (payee == address(0)) {
-            if (p.trig != Trigger.THRESHOLD) revert InvalidParams("payee");
+            if (p.trig != Trigger.THRESHOLD) revert InvalidParams(BAD_PAYEE);
             payee = msg.sender; // "keep my own wallet topped up"
         }
 
@@ -128,7 +144,6 @@ contract MandateManager is AccessControl, ReentrancyGuard, Pausable {
             dir: p.dir,
             trig: p.trig,
             active: true,
-            fails: 0,
             payee: payee,
             interval: p.interval,
             runs: 0,
@@ -142,15 +157,12 @@ contract MandateManager is AccessControl, ReentrancyGuard, Pausable {
     }
 
     function pauseMandate(uint256 id) external {
-        Mandate storage m = _owned(id);
-        m.active = false;
-        emit MandatePaused(id, false);
+        _owned(id).active = false;
+        emit MandatePaused(id);
     }
 
     function resumeMandate(uint256 id) external {
-        Mandate storage m = _owned(id);
-        m.active = true;
-        m.fails = 0;
+        _owned(id).active = true;
         emit MandateResumed(id);
     }
 
@@ -181,11 +193,11 @@ contract MandateManager is AccessControl, ReentrancyGuard, Pausable {
         if (m.trig != Trigger.THRESHOLD) return (true, m.amount);
 
         if (m.dir == Direction.SAVE) {
-            uint256 bal = stable.balanceOf(m.owner);
+            uint256 bal = IBalanceOf(stable).balanceOf(m.owner);
             if (bal <= m.bound) return (false, 0);
             amount = bal - m.bound;
         } else {
-            uint256 bal = stable.balanceOf(m.payee);
+            uint256 bal = IBalanceOf(stable).balanceOf(m.payee);
             if (bal >= m.bound) return (false, 0);
             amount = m.bound - bal;
         }
@@ -193,76 +205,17 @@ contract MandateManager is AccessControl, ReentrancyGuard, Pausable {
         due = amount > 0;
     }
 
-    function execute(uint256 id) external nonReentrant whenNotPaused returns (uint256 shares) {
-        return _execute(id);
-    }
+    /// @notice Run one due mandate. Permissionless; reverts with `NotDue` otherwise.
+    function execute(uint256 id) external returns (uint256 shares) {
+        if (_entered == 1) revert Reentrant();
+        _entered = 1;
 
-    /// @notice Runs every due mandate in `ids`; failures are recorded instead of reverting the batch.
-    ///         A mandate that fails MAX_FAILS times in a row is auto-paused.
-    function executeBatch(uint256[] calldata ids) external whenNotPaused returns (uint256 executed) {
-        for (uint256 i; i < ids.length; ++i) {
-            (bool due,) = isDue(ids[i]);
-            if (!due) continue;
-            try this.executeFromBatch(ids[i]) {
-                ++executed;
-            } catch (bytes memory reason) {
-                Mandate storage m = mandates[ids[i]];
-                m.fails += 1;
-                emit MandateFailed(ids[i], reason);
-                if (m.fails >= MAX_FAILS) {
-                    m.active = false;
-                    emit MandatePaused(ids[i], true);
-                }
-            }
-        }
-    }
-
-    /// @dev External so executeBatch can try/catch it; callable only by this contract.
-    function executeFromBatch(uint256 id) external nonReentrant returns (uint256) {
-        if (msg.sender != address(this)) revert OnlySelf();
-        return _execute(id);
-    }
-
-    /// @notice Scan ids [cursor, cursor + count) for due mandates. Returns the next cursor.
-    function dueIds(uint256 cursor, uint256 count) external view returns (uint256[] memory ids, uint256 next) {
-        uint256 end = cursor + count;
-        if (end > nextId) end = nextId;
-        uint256[] memory buf = new uint256[](end > cursor ? end - cursor : 0);
-        uint256 n;
-        for (uint256 id = cursor; id < end; ++id) {
-            (bool due,) = isDue(id);
-            if (due) buf[n++] = id;
-        }
-        assembly ("memory-safe") {
-            mstore(buf, n)
-        }
-        return (buf, end);
-    }
-
-    // ---------------------------------------------------------------------
-    // Admin
-    // ---------------------------------------------------------------------
-
-    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _pause();
-    }
-
-    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _unpause();
-    }
-
-    // ---------------------------------------------------------------------
-    // Internals
-    // ---------------------------------------------------------------------
-
-    function _execute(uint256 id) internal returns (uint256 shares) {
         (bool due, uint256 amount) = isDue(id);
         if (!due) revert NotDue(id);
         Mandate storage m = mandates[id];
 
         // Effects before interactions.
         m.runs += 1;
-        m.fails = 0;
         if (m.trig == Trigger.RECURRING) {
             uint64 next = m.nextRun + m.interval;
             m.nextRun = next > block.timestamp ? next : uint64(block.timestamp) + m.interval; // no burst catch-up
@@ -273,20 +226,27 @@ contract MandateManager is AccessControl, ReentrancyGuard, Pausable {
         }
 
         uint256 keepBps = BPS - m.maxSlippageBps;
+        address desk_ = address(desk);
         if (m.dir == Direction.SAVE) {
             stable.safeTransferFrom(m.owner, address(this), amount);
-            stable.forceApprove(address(desk), amount);
+            stable.safeApprove(desk_, amount);
             uint256 minShares = vault.previewDeposit(desk.quotePotForUsd(amount)) * keepBps / BPS;
             shares = desk.depositWithStable(amount, minShares, m.owner);
         } else {
             shares = desk.quoteSharesForUsd(amount);
-            IERC20(address(vault)).safeTransferFrom(m.owner, address(this), shares);
-            IERC20(address(vault)).forceApprove(address(desk), shares);
+            address shareToken = address(vault);
+            shareToken.safeTransferFrom(m.owner, address(this), shares);
+            shareToken.safeApprove(desk_, shares);
             desk.redeemToStable(shares, amount * keepBps / BPS, m.payee);
         }
 
         emit MandateExecuted(id, amount, shares, m.runs, m.nextRun);
+        _entered = 0;
     }
+
+    // ---------------------------------------------------------------------
+    // Internals
+    // ---------------------------------------------------------------------
 
     function _owned(uint256 id) internal view returns (Mandate storage m) {
         m = mandates[id];

@@ -25,6 +25,8 @@ import { GaugeArc } from "../components/GaugeArc";
 import { LineChart } from "../components/LineChart";
 import { BarChart } from "../components/BarChart";
 import { Heatmap } from "../components/Heatmap";
+import { AddressLink } from "../components/ExplorerLink";
+import { isDeployed, type Deployment } from "../addresses";
 import { GlassCard, Section, Card, KeyValue, Empty } from "../components/primitives";
 
 const ERA_SECS = 6 * 3600;
@@ -85,13 +87,13 @@ export function Home() {
     const now = Math.floor(Date.now() / 1000);
     const days = 14;
     const erasPerDay = 4;
-    // Row 0 = oldest day, column 0 = earliest era of the day.
+    // Column 0 = oldest day (today is the right-most column), row 0 = earliest era of the day.
     const cells = history.data.map((e) => {
       const delta = now - e.timestamp;
       const dayFromNow = Math.floor(delta / 86_400);
       if (dayFromNow < 0 || dayFromNow >= days) return undefined;
-      const row = days - 1 - dayFromNow;
-      const col = Math.min(
+      const col = days - 1 - dayFromNow;
+      const row = Math.min(
         erasPerDay - 1,
         Math.floor(((e.timestamp % 86_400) + 86_400) % 86_400 / ERA_SECS),
       );
@@ -326,10 +328,10 @@ export function Home() {
           ) : (
             <Heatmap
               cells={heat}
-              rows={14}
-              cols={4}
-              rowLabels={Array.from({ length: 14 }, (_, i) => (i === 13 ? "today" : `-${13 - i}d`))}
-              colLabels={["00-06", "06-12", "12-18", "18-24"]}
+              rows={4}
+              cols={14}
+              rowLabels={["00-06", "06-12", "12-18", "18-24"]}
+              colLabels={Array.from({ length: 14 }, (_, i) => (i === 13 ? "today" : `-${13 - i}d`))}
             />
           )}
         </Card>
@@ -370,9 +372,35 @@ export function Home() {
           />
         </Card>
       </Section>
+
+      <Section title="Contracts on Portaldot">
+        <Card>
+          <div className="grid gap-x-8 sm:grid-cols-2">
+            {CONTRACTS.filter(([key]) => isDeployed(p.addresses[key])).map(([key, label]) => (
+              <div key={key} className="flex items-center justify-between gap-4 py-2">
+                <span className="text-sm text-fg-muted">{label}</span>
+                <AddressLink address={p.addresses[key]} />
+              </div>
+            ))}
+          </div>
+        </Card>
+      </Section>
     </>
   );
 }
+
+const CONTRACTS: [keyof Deployment, string][] = [
+  ["StakingVault", "Staking vault (stPOT)"],
+  ["SwapDesk", "Swap desk"],
+  ["InsuranceFund", "Insurance fund"],
+  ["StabilizationReserve", "Stabilization reserve"],
+  ["OracleCommittee", "Oracle committee"],
+  ["PolicyNFT", "Policy certificate"],
+  ["MandateManager", "Mandates"],
+  ["WPOT", "WPOT"],
+  ["tUSD", "tUSD"],
+  ["xUSD", "xUSD (x402)"],
+];
 
 function HealthRow({
   dot,

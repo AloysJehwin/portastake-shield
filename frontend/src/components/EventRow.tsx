@@ -7,12 +7,15 @@ export function EventRow({
   detail,
   timestamp,
   href,
+  trailing,
 }: {
   icon: ReactNode;
   title: string;
   detail?: ReactNode;
   timestamp?: bigint | number;
   href?: string;
+  /** Right-aligned slot, e.g. an explorer link. */
+  trailing?: ReactNode;
 }) {
   const content = (
     <div className="flex items-center gap-3 py-3">
@@ -24,6 +27,7 @@ export function EventRow({
         {detail && <div className="text-xs text-fg-muted truncate">{detail}</div>}
       </div>
       {timestamp !== undefined && <div className="text-xs text-fg-subtle num">{timeAgo(timestamp)}</div>}
+      {trailing && <div className="shrink-0">{trailing}</div>}
     </div>
   );
   return href ? (

@@ -12,7 +12,7 @@ export function SlippageControl({ bps, onChange }: { bps: number; onChange: (bps
             onClick={() => onChange(p)}
             className={`chip ${bps === p ? "border-fg text-fg" : ""}`}
           >
-            {(p / 100).toFixed(p === 10 ? 1 : 0)}%
+            {p / 100}%
           </button>
         ))}
       </div>
