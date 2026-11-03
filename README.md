@@ -18,7 +18,25 @@ On the surface: deposit stablecoins, earn 8% a year (in POT), automate savings a
 | Testnet deployment | ✅ All four stages live on Portaldot V3 (addresses in `contracts/deployments/420420777.json`); stage 4 (PolicyNFT + MandateManager) cost ~540 tPOT ([details](docs/ARCHITECTURE.md#deploy-cost--staged)) |
 | Relayer (`relayer/`) | 🚧 Mandate keeper and x402 facilitator done. Price feed, sweep, bond + nominate, reward reporting and the bridge relay are built; the bridge passes an end-to-end run on three local chains, while staking has only been dry-run against the live chain. ⏳ Not started on testnet (needs a funded stash and keys) |
 | Cross-chain bridge (`TokenBridge`) | ✅ Built and tested locally, configured for Base, Arbitrum, OP, Ethereum Sepolia and Polygon Amoy. ⏳ Not deployed: the Portaldot side needs ~280 tPOT ([steps](docs/ARCHITECTURE.md#cross-chain-bridge)) |
+| SDK (`sdk/`) | ✅ `@portastake/sdk`: x402 paywall, payer and facilitator, plus vault, desk, mandate and keeper clients, explorer links and a `portastake` CLI ([README](sdk/README.md)) |
 | Frontend (`frontend/`) | ✅ Vite + React + wagmi + RainbowKit; five pages (Home / Deposit / Withdraw / Automate / Activity); light theme with a glass nav; live-wired to the contracts, stage-aware |
+
+## SDK
+
+[`@portastake/sdk`](sdk/README.md) puts the x402 payments and the protocol tooling in one npm package, so any Portaldot app can use them:
+
+```sh
+npm i @portastake/sdk viem
+npx portastake stats                      # live vault numbers
+npx portastake offer <x402 url>           # what a paid API charges
+```
+
+- `@portastake/sdk/x402`: `createPayingFetch` pays x402 APIs in xUSD within a spend limit. Payers sign; they pay no gas.
+- `@portastake/sdk/x402/server`: `xusdPaywall` is Express middleware that charges per request.
+- `@portastake/sdk/x402/facilitator`: `createFacilitator` verifies and settles payments on Portaldot.
+- `@portastake/sdk/chain`: `createPortaStake` covers stats, positions, deposits and withdrawals in tPOT, tUSD or xUSD. Also `mandates`, `runKeeperPass`, explorer links, and `estimateDeployCost` and gas helpers for Portaldot's EVM.
+
+The relayer's facilitator, paid API and keeper are built on it.
 
 ## Quickstart
 
@@ -265,6 +283,7 @@ Maria never touched Substrate. She never heard "slashing." She never typed "bond
 | **PolicyNFT** | Soulbound ERC-721 + ERC-5192, minted by the vault on first deposit, terms recorded in `TermsSnapshot` | Her coverage certificate | ✅ |
 | **MandateManager** | Save / pay mandates (recurring, scheduled, threshold) with caps, expiry, cooldown and slippage floors; permissionless `execute` | Savings run themselves; bills pay themselves | ✅ |
 | **TokenBridge** | Lock-and-release tUSD bridge with N-of-M signers, on every supported chain | She can bring money from another chain and start saving in one step | ✅ local, ⏳ testnet |
+| **`@portastake/sdk`** | npm package: x402 pay-per-use (paywall middleware, paying `fetch`, facilitator) and on-chain tooling (vault, desk, mandates, keeper, explorer links, Portaldot deploy-cost and gas helpers), with a CLI | Other Portaldot apps can charge per request in xUSD and build on stPOT | ✅ |
 | **Relayer** | TypeScript daemon, SS58 key + EVM key | Bonds POT, reports rewards, feeds price, keeps mandates running, carries bridge transfers | 🚧 |
 | **Attester daemon** | Opt-in TS daemon, signs slashing events | Decentralizes the oracle | 🚧 |
 | **Governance (veSTPOT)** | Time-locked stPOT, 24h parameter timelock | Community picks validators, sets insurance % | Later |
@@ -316,6 +335,7 @@ relayer/              TypeScript: EVM ↔ Substrate jobs and the cross-chain bri
   scripts/probe.mjs   read-only probe of the live V3 testnet
   scripts/e2e-local.mjs  bridge end-to-end test on three local chains
 scripts/              staged deploys, including deploy-bridge.mjs
+sdk/                  @portastake/sdk: x402 pay-per-use + on-chain tooling, and the portastake CLI
 frontend/             React + wagmi/viem: Maria's savings app
 docs/                 architecture, chain facts, 8% engine, debit engine
 ```
