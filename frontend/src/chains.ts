@@ -1,4 +1,5 @@
 import { defineChain } from "viem";
+import bridgeChainsJson from "./deployments/bridge-chains.json";
 
 /** PortaldotV3 testnet — nativeToEthRatio = 10_000 maps 14-dp tPOT on Substrate to 18-dp on EVM. */
 export const portaldot = defineChain({
@@ -27,5 +28,24 @@ export const anvil = defineChain({
   testnet: true,
 });
 
+export type BridgeChain = (typeof bridgeChainsJson)[number] & { hub?: boolean };
+
+/** Every chain the bridge knows about. Portaldot is the hub; the rest connect to it. */
+export const bridgeChains = bridgeChainsJson as BridgeChain[];
+
+/** Other testnets the wallet can switch to. Savings stay on Portaldot; these only hold tUSD to bridge. */
+export const spokeChains = bridgeChains
+  .filter((c) => !c.hub)
+  .map((c) =>
+    defineChain({
+      id: c.chainId,
+      name: c.name,
+      nativeCurrency: { name: c.nativeSymbol, symbol: c.nativeSymbol, decimals: c.nativeDecimals },
+      rpcUrls: { default: { http: [c.rpc] } },
+      blockExplorers: { default: { name: "Explorer", url: c.explorer } },
+      testnet: true,
+    }),
+  );
+
 /** Chains the app will talk to, in order of preference. */
-export const supportedChains = [portaldot, anvil] as const;
+export const supportedChains = [portaldot, anvil, ...spokeChains] as const;

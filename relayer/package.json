@@ -9,7 +9,12 @@
     "check-balance": "node scripts/check-balance.mjs",
     "x402:facilitator": "node x402/facilitator.mjs",
     "x402:api": "node x402/server.mjs",
-    "x402:pay": "node x402/client.mjs"
+    "x402:pay": "node x402/client.mjs",
+    "start": "tsx src/index.ts",
+    "check": "tsx src/index.ts --once --dry-run",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "e2e:bridge": "node scripts/e2e-local.mjs"
   },
   "dependencies": {
     "@polkadot/api": "^16.0.0",
@@ -20,5 +25,10 @@
     "ethers": "^6.13.4",
     "express": "^5.3.0",
     "viem": "^2.57.16"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
   }
 }

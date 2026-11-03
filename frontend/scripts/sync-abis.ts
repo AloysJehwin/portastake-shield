@@ -33,6 +33,7 @@ const WANTED = [
   "OracleCommittee",
   "X402Dollar",
   "XusdGateway",
+  "TokenBridge",
 ];
 
 function readForgeArtifact(name: string): unknown[] | null {
