@@ -1,0 +1,8 @@
+[
+  { "key": "portaldot", "name": "Portaldot V3", "chainId": 420420777, "hub": true, "rpc": "https://test-evm-rpc-v3.portaldot.dev", "explorer": "https://scanner-testnet-v3.portaldot.dev", "nativeSymbol": "tPOT", "nativeDecimals": 18, "finality": "finalized", "legacy": true, "logChunk": 2000 },
+  { "key": "base-sepolia", "name": "Base Sepolia", "chainId": 84532, "rpc": "https://sepolia.base.org", "explorer": "https://sepolia.basescan.org", "nativeSymbol": "ETH", "nativeDecimals": 18, "finality": 10, "logChunk": 1000 },
+  { "key": "arbitrum-sepolia", "name": "Arbitrum Sepolia", "chainId": 421614, "rpc": "https://sepolia-rollup.arbitrum.io/rpc", "explorer": "https://sepolia.arbiscan.io", "nativeSymbol": "ETH", "nativeDecimals": 18, "finality": 20, "logChunk": 1000 },
+  { "key": "optimism-sepolia", "name": "OP Sepolia", "chainId": 11155420, "rpc": "https://sepolia.optimism.io", "explorer": "https://sepolia-optimism.etherscan.io", "nativeSymbol": "ETH", "nativeDecimals": 18, "finality": 10, "logChunk": 1000 },
+  { "key": "sepolia", "name": "Ethereum Sepolia", "chainId": 11155111, "rpc": "https://ethereum-sepolia-rpc.publicnode.com", "explorer": "https://sepolia.etherscan.io", "nativeSymbol": "ETH", "nativeDecimals": 18, "finality": 3, "logChunk": 1000 },
+  { "key": "polygon-amoy", "name": "Polygon Amoy", "chainId": 80002, "rpc": "https://rpc-amoy.polygon.technology", "explorer": "https://amoy.polygonscan.com", "nativeSymbol": "POL", "nativeDecimals": 18, "finality": 10, "logChunk": 1000 }
+]

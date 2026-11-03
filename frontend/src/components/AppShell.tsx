@@ -1,14 +1,17 @@
 import { type ReactNode } from "react";
-import { NavLink } from "react-router-dom";
-import { Home, ArrowDownToLine, ArrowUpFromLine, Repeat, History, Shield, Zap } from "lucide-react";
+import { NavLink, useLocation } from "react-router-dom";
+import { useAccount, useChainId, useSwitchChain } from "wagmi";
+import { Home, ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, Repeat, History, Shield, Zap } from "lucide-react";
+import { portaldot, spokeChains } from "../chains";
 import { WalletButton } from "./WalletButton";
 
 const NAV = [
   { to: "/", label: "Home", icon: Home },
   { to: "/deposit", label: "Deposit", icon: ArrowDownToLine },
+  { to: "/bridge", label: "Bridge", icon: ArrowLeftRight },
   { to: "/withdraw", label: "Withdraw", icon: ArrowUpFromLine },
   { to: "/automate", label: "Automate", icon: Repeat },
-  { to: "/pay-per-use", label: "Pay per use", icon: Zap },
+  { to: "/pay-per-use", label: "Pay per use", short: "Pay", icon: Zap },
   { to: "/activity", label: "Activity", icon: History },
 ] as const;
 
@@ -50,27 +53,48 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {/* Main */}
       <main className="flex-1 lg:ml-60">
-        <div className="mx-auto w-full max-w-content px-4 py-6 lg:py-10 pb-28 lg:pb-10">{children}</div>
+        <div className="mx-auto w-full max-w-content px-4 py-6 lg:py-10 pb-28 lg:pb-10">
+          <SpokeChainNotice />
+          {children}
+        </div>
       </main>
 
       {/* Mobile bottom tab bar */}
       <nav className="lg:hidden fixed bottom-3 inset-x-3 z-20 card-glass px-2 py-2 flex items-center justify-between">
-        {NAV.map(({ to, label, icon: Icon }) => (
+        {NAV.map(({ to, label, icon: Icon, ...rest }) => (
           <NavLink
             key={to}
             to={to}
             end={to === "/"}
             className={({ isActive }) =>
-              `flex-1 flex flex-col items-center gap-0.5 py-1.5 rounded text-[11px] transition-colors ${
+              `flex-1 min-w-0 flex flex-col items-center gap-0.5 py-1.5 rounded text-[10px] transition-colors ${
                 isActive ? "text-fg" : "text-fg-subtle"
               }`
             }
           >
             <Icon size={18} aria-hidden />
-            <span>{label}</span>
+            <span>{"short" in rest ? rest.short : label}</span>
           </NavLink>
         ))}
       </nav>
+    </div>
+  );
+}
+
+/** Savings only exist on Portaldot, so every page but Bridge reads as empty from another chain. */
+function SpokeChainNotice() {
+  const { isConnected } = useAccount();
+  const chainId = useChainId();
+  const { pathname } = useLocation();
+  const { switchChain } = useSwitchChain();
+  const spoke = spokeChains.find((c) => c.id === chainId);
+  if (!isConnected || !spoke || pathname === "/bridge") return null;
+  return (
+    <div className="card mb-6 p-4 flex items-center justify-between gap-3 text-sm text-fg">
+      <span>You are on {spoke.name}. Your savings are on {portaldot.name}.</span>
+      <button className="btn-secondary shrink-0" onClick={() => switchChain({ chainId: portaldot.id })}>
+        Switch
+      </button>
     </div>
   );
 }

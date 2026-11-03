@@ -1,25 +1,43 @@
 # relayer/
 
-TypeScript daemon that bridges Portaldot V3's EVM contracts to the Substrate staking pallet.
+TypeScript daemon that connects Portaldot's EVM to its Substrate staking pallet and carries bridge transfers between chains.
 
-Stack:
+```sh
+npm install
+cp .env.example .env     # fill in the keys you have
+npm run check            # one read-only pass against the live chains; sends nothing
+npm start                # run every job
+npm start -- --only=price --once
+```
 
-- `@polkadot/api` for Substrate side (SS58 account, `staking.*` extrinsics)
-- `viem` / `ethers` for EVM side (watch events, call `notifyReward`, submit oracle proofs)
-- `@x402/*` for the x402 facilitator and sample paid API
-
-See `../docs/ARCHITECTURE.md` §"Why pallet-revive matters" for why this daemon exists.
-
-Responsibilities:
-
-| Job | EVM side | Substrate side |
+| Job | Every | What it does |
 |---|---|---|
-| Staking bridge | watch `StakingVault` deposits, call `sweepToStake` | `staking.bond` / `bond_extra` / `nominate` |
-| Rewards | `StakingVault.notifyReward{value}` each era | watch `staking.Rewarded`, `payout_stakers` |
-| Slow exits | `StakingVault.fulfillUnstake{value}` | `staking.unbond` → `withdraw_unbonded` |
-| Price feed | `SwapDesk.setPrice` (FEEDER_ROLE) | read the Native/7777 `assetConversion` pool |
-| Mandate keeper | scan `MandateManager.isDue`, call `execute(id)` (`npm run run-mandates`) | — |
-| x402 facilitator | verify and settle signed xUSD payments (`npm run x402:facilitator`) | — |
+| `price` | 5 min | Reads the Native/7777 `assetConversion` pool and calls `SwapDesk.setPrice` when the feed is half way to stale or the pool moved 1%. Refuses jumps over 50% |
+| `staking` | 10 min | Maps the stash if needed, `sweepToStake`, `staking.bond` / `bond_extra` + `nominate`, claims each finished era, and reports rewards with `notifyReward{value}` |
+| `bridge` | 15 s | Scans `Locked` on each deployed chain, waits for finality, signs, and calls `release` on the destination. Failed deliveries back off and retry |
+
+State lives in `.state/state.json`. Losing it is safe for the bridge (it rescans, and `processed` blocks double pays). For staking, it loses any rewards claimed but not yet reported.
+
+## Keys
+
+| Env | Needs |
+|---|---|
+| `RELAYER_KEY` | `RELAYER_ROLE` and `FEEDER_ROLE` on Portaldot (the deployer has both), and gas on every bridge chain |
+| `BRIDGE_SIGNER_KEYS` | Registered with `setSigner`. Use a separate key |
+| `STASH_SURI`, or `STASH_JSON` + `STASH_PASSWORD` | The sr25519 stash, with enough tPOT for fees and the mapping deposit |
+
+## Tests
+
+```sh
+npm test            # sweep, bond, price and account-mapping logic
+npm run e2e:bridge  # real contracts + real relayer on three local anvil chains (run forge build first)
+```
+
+**Not exercised on-chain yet:** the staking path (`mapAccount`, `bond`, `nominate`, `payoutStakersByPage`, `notifyReward`). It was only read-tested against the live node, because the stash has no funds. Watch the first real pass.
+
+Not built: slow-exit fulfilment (`fulfillUnstake`), policy-NFT minting, save/pay automation and the attester daemon.
+
+`npm run run-mandates` runs the mandate keeper separately: it scans `MandateManager.isDue` and calls `execute(id)`.
 
 ## x402 payments
 

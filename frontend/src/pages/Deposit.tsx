@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { parseUnits, maxUint256 } from "viem";
 import { useProtocol } from "../hooks/useProtocol";
 import { useAllowance } from "../hooks/useAllowance";
@@ -75,7 +75,10 @@ export function Deposit() {
         <GlassCard>
           <h1 className="text-lg text-fg mb-1">Deposit</h1>
           <p className="text-sm text-fg-muted mb-5">
-            Pay with tUSD or xUSD and we handle the swap into stPOT. Yield accrues immediately.
+            Pay with tUSD or xUSD and we handle the swap into stPOT. Yield accrues immediately.{" "}
+            <Link to="/bridge" className="text-fg underline">
+              Money on another chain?
+            </Link>
           </p>
 
           <div className="flex gap-1 mb-5">
