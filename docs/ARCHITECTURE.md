@@ -46,21 +46,20 @@ See `contracts/README.md`. Everything uses OpenZeppelin v5.4.0.
 
 ### Deploy cost — staged
 
-revive holds a storage deposit of ~0.06 tPOT per byte of deployed (init) code, plus a ~30% code-hash lockup on instantiation and the storage slots written during wiring. Measured all-in at ~0.074 tPOT/byte with `forge build --sizes` (`via_ir`, `optimizer_runs = 1`):
+revive holds a storage deposit of ~0.06 tPOT per byte of deployed (init) code, plus instantiate overhead (~20%) and the storage slots written during wiring. Sizes from `forge build --sizes` (`via_ir`, `optimizer_runs = 1`); stage 4 measured live with `relayer/scripts/measure-deploy.mjs`:
 
-| Stage | Script | Deploys | Added code (B) | Added cost (tPOT) | Running total |
-|---|---|---|---|---|---|
-| 1 Core | `Deploy1Core.s.sol` | WPOT, InsuranceFund, StabilizationReserve, StakingVault | ~19,620 | ~1,452 | **~1,452** |
-| 2 Desk | `Deploy2Desk.s.sol` | MockStable (tUSD), SwapDesk | ~9,327 | ~690 | **~2,142** |
-| 3 Committee | `Deploy3Committee.s.sol` | OracleCommittee | ~3,855 | ~285 | **~2,427 ✅ under 2,500** |
-| 4a | `Deploy4Extras.s.sol WITH_POLICY=1` | PolicyNFT | ~6,264 | ~463 | ~2,890 (later) |
-| 4b | `Deploy4Extras.s.sol WITH_MANDATES=1` | MandateManager | ~8,556 | ~633 | ~3,523 (later) |
+| Stage | Deploys | Added cost (tPOT) |
+|---|---|---|
+| 1 Core | WPOT, InsuranceFund, StabilizationReserve, StakingVault | ~1,450 |
+| 2 Desk | MockStable (tUSD), SwapDesk | ~690 |
+| 3 Committee | OracleCommittee | ~285 |
+| 4 Extras | PolicyNFT (1,936 B), MandateManager (5,451 B) | **~540** |
 
-Stages 1–3 give users: native tPOT deposit, stablecoin on-ramp, 10% hot-reserve exits, slash reporting and insurance payouts. Nothing is deleted — PolicyNFT and MandateManager still live in `contracts/src/` and ship in stage 4 when more tPOT is available.
+All four stages are live on V3 (`deployments/420420777.json`). Stage 4 was trimmed to fit: PolicyNFT is a minimal soulbound ERC-721 (read surface + ERC-165 + ERC-5192, every transfer/approval reverts, immutable minter, terms carried in the `TermsSnapshot` event), and MandateManager carries no admin role or global pause, uses a 1-slot reentrancy guard, Solady `SafeTransferLib`, and numeric `InvalidParams` codes. The relayer drives `execute` as keeper (see below).
 
-The vault's `policy` field is settable (admin only), and `_deposit` + `depositNative` skip the mint while it is unset, so stage 1 works without the certificate contract. **Backfill caveat**: users who deposit before stage 4a runs do not retroactively receive a policy NFT.
+The vault's `policy` field is settable (admin only), and `_deposit` + `depositNative` skip the mint while it is unset, so stage 1 works without the certificate contract. **Backfill caveat**: users who deposited before stage 4 do not retroactively receive a policy NFT.
 
-Each stage reads `deployments/<chainId>.json` from the previous stage and writes a merged version back. The in-memory `DeployAll.s.sol` script runs the whole suite in a single broadcast for local chain / CI parity.
+On V3, deploy with `scripts/deploy-cast.mjs`: revive folds the storage deposit into gas, which `forge script` under-estimates (error 1010), while `cast send` uses the node's `eth_estimateGas`. The script is re-runnable and reuses anything already deployed. Each stage reads `deployments/<chainId>.json` from the previous stage and writes a merged version back. The in-memory `DeployAll.s.sol` script runs the whole suite in a single broadcast for local chain / CI parity.
 
 Tests use `vm.getBlockTimestamp()` instead of `block.timestamp` for warps: under `via_ir` the compiler may cache `block.timestamp` within a test function.
 
@@ -68,8 +67,8 @@ Changes from the original sketch:
 - `Router` → `SwapDesk`: an oracle-priced inventory desk, because no DEX is reachable from the EVM. The POT/USD feed is folded into `SwapDesk` itself (no separate `PriceOracle` contract).
 - `InsuranceFund` is a plain WPOT bucket, not ERC-4626, since it has no external depositors in v1.
 - `StabilizationReserve` is new.
-- `PolicyNFT` is unchanged in design (soulbound ERC-721), but attached to the vault by an admin `setPolicy` call so it can arrive in a later deploy stage.
-- `MandateManager` is unchanged in design. It depends on `SwapDesk` and the vault at construction, so it is naturally deployed last.
+- `PolicyNFT` is a minimal soulbound ERC-721 + ERC-5192 whose only minter is the vault, attached by an admin `setPolicy` call so it can arrive in a later deploy stage.
+- `MandateManager` enforces every save/pay rule itself and exposes a permissionless `execute`. It depends on `SwapDesk` and the vault at construction, so it is naturally deployed last.
 - `DecimalsOracle` was dropped: decimals are fixed (14 native, 18 EVM).
 - `Governance` and `MiniLend` are deferred. Parameters sit behind the admin role, which moves to a 24h `TimelockController`.
 
@@ -93,16 +92,17 @@ R < owed:  R + reserve draw → users
 - Transparency for the UI: `lastEffectiveRateBps` on-chain. Reserve runway (days) and insurance ratio are computed in the frontend from public balances, `totalAssets()` and `targetRateBps`.
 - The promise is in POT. The USD value shown in the app moves with the POT price, and the UI must say so. Insurance covers slashing, not price.
 
-## Savings automation (relayer + `SwapDesk.depositFor`)
+## Savings automation (`MandateManager`)
 
 | | RECURRING ("auto") | SCHEDULED | THRESHOLD |
 |---|---|---|---|
-| **SAVE** (wallet tUSD → stPOT), automatic | every `interval` | once at `start` | wallet > `bound` → sweep the excess (capped at `amount`) |
-| **PAY** (stPOT → tUSD to payee), one-tap | every `interval` | once at `start` | payee < `bound` → top up the gap (capped at `amount`) |
+| **SAVE** (wallet tUSD → stPOT) | every `interval` | once at `start` | wallet > `bound` → sweep the excess (capped at `amount`) |
+| **PAY** (stPOT → tUSD to payee) | every `interval` | once at `start` | payee < `bound` → top up the gap (capped at `amount`) |
 
-- **Rules** live in the relayer: per-run cap, run limit, expiry, slippage, pause/cancel, auto-pause after 3 failures in a row, no burst catch-up after downtime, threshold cooldown.
-- **SAVE authority (on-chain)**: the user sets `SwapDesk.setAutoSaveBudget(x)` and approves tUSD to the desk. Only `KEEPER_ROLE` (the relayer) can call `depositFor(owner, amount, minShares)`. Each call spends the budget, and shares always go to `owner`, so a compromised keeper can at most move her own tUSD into her own savings, up to the budget.
-- **PAY**: moving money to a third party needs her signature, so the relayer sends a reminder with the payment pre-filled (`redeemToStable(shares, minUsdOut, payee)`) and she confirms it.
+- **Rules** are checked in `MandateManager.isDue` / `execute`: per-run cap, run limit, expiry, threshold bound, cooldown (required for RECURRING and THRESHOLD), pause/cancel, no burst catch-up after downtime. State is written before any token moves.
+- **Authority** is the owner's allowance to `MandateManager`: tUSD for SAVE, stPOT for PAY. SAVE shares always go to the owner; PAY goes to the payee fixed at creation. Revoking the allowance or cancelling stops the mandate.
+- **Slippage**: PAY has a real floor (`amount × (1 − maxSlippageBps)` tUSD out). The SAVE floor is computed from the same desk price in the same transaction, so it guards against rounding only; the desk's price feed (staleness-checked, feeder-set) is what bounds a SAVE.
+- **Keeper**: `execute` is permissionless because revive has no cron. `relayer/scripts/run-mandates.mjs` scans ids `[0, nextId)` with `isDue` and executes each due one; a reverting run leaves the mandate intact and is retried next pass. The keeper chooses only *when* to call, never *how much*.
 
 ## Decimals handling
 
@@ -127,13 +127,14 @@ Rich, named events everywhere. Both the frontend and the relayer are event-drive
 - `InsuranceFund`: `Funded`, `Payout`
 - `OracleCommittee`: `AttesterBonded`, `AttesterSlashed`, `SlashingProofSubmitted`, `SlashingProofFinalized`
 - `Governance`: `ProposalCreated`, `Voted`, `TimelockQueued`, `ParameterApplied`
-- Policy NFT (native `Nfts` pallet, locked item): minted by the relayer from `Deposit`, metadata records the terms at that block (`targetRateBps`, `insuranceShareBps`)
+- `PolicyNFT`: `Transfer` (mint only), `Locked`, `TermsSnapshot(id, holder, targetRateBps, insuranceShareBps)`
+- `MandateManager`: `MandateCreated`, `MandateExecuted`, `MandatePaused`, `MandateResumed`, `MandateCancelled`
 
 ## Development order (concrete)
 
 1. WS probe script that enumerates pallets at `wss://test-node-v3.portaldot.dev` and prints the staking extrinsic signature. **Blocks every other decision below.**
 2. Foundry scaffold with `StakingVault` + mock reward emitter. First real commit.
-3. `InsuranceFund` + yield-split hook + policy NFT (native `Nfts`, minted by the relayer). End-to-end Foundry test.
+3. `InsuranceFund` + yield-split hook + soulbound `PolicyNFT` minted by the vault. End-to-end Foundry test.
 4. Deploy to V3 EVM testnet. Capture addresses + first tx hashes.
 5. Relayer v1: watches `Deposit`/`Withdraw`, submits `bond`/`unbond` or `nominationPools.join`/`unbond`.
 6. `OracleCommittee` + attester daemon. Mock slashing path first.
@@ -146,7 +147,7 @@ Rich, named events everywhere. Both the frontend and the relayer are event-drive
 
 Six steps, all on live V3 EVM testnet:
 
-1. User A deposits 100 POT. Receives 100 stPOT. Relayer mints the policy NFT (native `Nfts`). Dashboard shows deposit.
+1. User A deposits 100 POT. Receives 100 stPOT. The vault mints her soulbound policy NFT. Dashboard shows deposit.
 2. Relayer bonds 100 POT on Substrate side; nominates a validator from the allowlist. Substrate explorer link visible.
 3. Reward event: 10 POT posted to vault via `notifyReward`. 1.5 POT → InsuranceFund, 8.5 POT → share price up.
 4. Attester daemons sign a slashing event of 5 POT. `OracleCommittee` reaches threshold; `StakingVault.reportSlash` draws the InsuranceFund to reimburse the vault.

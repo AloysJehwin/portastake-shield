@@ -42,16 +42,15 @@ abstract contract Base is Test {
         usd = new MockStable(admin);
         insurance = new InsuranceFund(wpot);
         reserve = new StabilizationReserve(wpot);
-        policy = new PolicyNFT(admin);
         vault = new StakingVault(wpot, insurance, reserve, admin, treasury, relayer);
         insurance.setVault(address(vault));
         reserve.setVault(address(vault));
-        policy.grantRole(policy.MINTER_ROLE(), address(vault));
+        policy = new PolicyNFT(address(vault));
         vault.setPolicy(policy);
         vault.grantRole(vault.RELAYER_ROLE(), relayer);
         desk = new SwapDesk(usd, IERC4626(address(vault)), admin, 1 days);
         desk.setPrice(POT_PRICE);
-        mandates = new MandateManager(usd, IERC4626(address(vault)), desk, admin);
+        mandates = new MandateManager(address(usd), IERC4626(address(vault)), desk);
         committee = new OracleCommittee(vault, admin);
         vault.grantRole(vault.SLASHER_ROLE(), address(committee));
         vm.stopPrank();
