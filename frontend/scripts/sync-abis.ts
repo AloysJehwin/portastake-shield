@@ -31,6 +31,7 @@ const WANTED = [
   "PolicyNFT",
   "MandateManager",
   "OracleCommittee",
+  "X402Dollar",
 ];
 
 function readForgeArtifact(name: string): unknown[] | null {
