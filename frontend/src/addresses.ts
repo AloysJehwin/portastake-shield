@@ -54,6 +54,20 @@ export function addressesFor(chainId: number): Deployment {
   return deployments[chainId] ?? empty;
 }
 
+export type BridgeDeployment = { TokenBridge: Address; token: Address; desk: Address; deployBlock: number };
+
+// `scripts/deploy-bridge.mjs` writes one bridge-<chainId>.json per chain it has deployed to.
+const bridgeFiles = import.meta.glob<BridgeDeployment>("./deployments/bridge-*.json", {
+  eager: true,
+  import: "default",
+});
+
+export const bridgeDeployments: Record<number, BridgeDeployment> = Object.fromEntries(
+  Object.entries(bridgeFiles)
+    .filter(([file]) => /bridge-\d+\.json$/.test(file)) // leaves out bridge-chains.json
+    .map(([file, dep]) => [Number(file.match(/bridge-(\d+)\.json$/)![1]), dep]),
+);
+
 export function isDeployed(address: Address): boolean {
   return address !== zero;
 }

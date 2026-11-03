@@ -7,7 +7,7 @@ import {
   walletConnectWallet,
 } from "@rainbow-me/rainbowkit/wallets";
 import { http, createConfig } from "wagmi";
-import { anvil, portaldot } from "./chains";
+import { anvil, portaldot, spokeChains } from "./chains";
 
 /**
  * wagmi + RainbowKit configuration.
@@ -43,12 +43,13 @@ const connectors = connectorsForWallets(
 
 export const wagmiConfig = createConfig({
   connectors,
-  chains: [portaldot, anvil],
+  chains: [portaldot, anvil, ...spokeChains],
   transports: {
     // Batch multicall reads and retry transient revive RPC hiccups so the first
     // paint after connect doesn't fail on a flaky response.
     [portaldot.id]: http(portaldot.rpcUrls.default.http[0], { batch: true, retryCount: 2 }),
     [anvil.id]: http(anvil.rpcUrls.default.http[0]),
+    ...Object.fromEntries(spokeChains.map((c) => [c.id, http(c.rpcUrls.default.http[0])])),
   },
   ssr: false,
 });

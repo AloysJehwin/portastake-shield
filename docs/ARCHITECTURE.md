@@ -104,6 +104,40 @@ R < owed:  R + reserve draw → users
 - **Slippage**: PAY has a real floor (`amount × (1 − maxSlippageBps)` tUSD out). The SAVE floor is computed from the same desk price in the same transaction, so it guards against rounding only; the desk's price feed (staleness-checked, feeder-set) is what bounds a SAVE.
 - **Keeper**: `execute` is permissionless because revive has no cron. `relayer/scripts/run-mandates.mjs` scans ids `[0, nextId)` with `isDue` and executes each due one; a reverting run leaves the mandate intact and is retried next pass. The keeper chooses only *when* to call, never *how much*.
 
+## Cross-chain bridge
+
+No third-party bridge is available: on 2026-11-03, LayerZero, Across and Wormhole did not list Portaldot, and the live runtime has no XCM or ISMP pallet (`beefy` is the only bridge-related one). So `TokenBridge` is a small lock-and-release bridge the same relayer runs.
+
+```
+spoke (Base, Arbitrum, OP, Sepolia, Amoy)                Portaldot (hub)
+  user: TokenBridge.bridge(dst, to, amount, minShares)
+  tokens locked, Locked emitted
+        │  relayer waits for finality, signers sign
+        └───────────────────────────────────────────▶ TokenBridge.release(...)
+                                                        minShares > 0 → SwapDesk.depositWithStable → stPOT to user
+                                                        desk can't take it → plain tUSD to user
+```
+
+- **Routes are hub-and-spoke.** Adding a chain is one entry in `contracts/deployments/bridge-chains.json` plus a deploy run. Spoke-to-spoke goes through Portaldot in two transfers.
+- **Save step.** `minShares > 0` asks the destination to save. It runs in a try/catch, so a stale price, an empty desk or slippage pays out tUSD instead of stranding the transfer.
+- **Gas floor.** A low gas limit makes that same try/catch swallow an out-of-gas in the desk call and pay tUSD. The relayer sets a floor on save releases. Anyone else submitting with low gas can only downgrade the outcome to tUSD; no funds are lost.
+- **Replay and forgery.** The signed digest binds both chain ids, both bridge addresses, nonce, receiver, amount and `minShares`. `processed` is set before any transfer, so wiping the relayer's state only causes a harmless rescan.
+- **Liquidity.** Lock-and-release pays from the destination's inventory. The UI refuses a transfer larger than the far side holds. If one still comes up short, it stays pending and delivers after a top-up; there is no on-chain refund.
+- **Trust.** The signers can release everything the bridge holds, and the owner can replace the signers. This is testnet-only and unaudited. v1 runs its signers in one process, so it is not yet real N-of-M. Next steps are independent signer processes, then BEEFY light-client proofs (`beefy` is live).
+- **tUSD has an open faucet**, so this demonstrates the flow, not a real stablecoin bridge.
+
+### Going live
+
+The deployer holds ~48 tPOT. `TokenBridge` costs ~258 tPOT on Portaldot (3,526 B at the ~0.073 tPOT/byte that stage 4 really cost), and setup adds ~20, so plan on ~280.
+
+1. Request more tPOT through the Discord ticket, for the deployer and for the stash (`5DUuK…`, which holds 0).
+2. Run the relayer's price job (see `relayer/README.md`). The feed goes stale after 24h, and every stablecoin deposit reverts until it is refreshed.
+3. `cd contracts && forge build`, then deploy:
+   `PRIVATE_KEY=… BRIDGE_SIGNER=… node ../scripts/deploy-bridge.mjs portaldot base-sepolia arbitrum-sepolia`
+4. `cd frontend && pnpm sync-abis`, then start the relayer.
+
+Spokes need testnet gas for the deployer and the relayer key. The desk's POT inventory caps how much a save can take (about 15 POT today), and anything larger arrives as tUSD.
+
 ## Decimals handling
 
 - Substrate side: tPOT has 14 decimals.
@@ -117,7 +151,9 @@ R < owed:  R + reserve draw → users
 
 `StakingVault.stakingAccount` is the H160 of the relayer's SS58 stash. The relayer's sr25519 account calls `revive.map_account` once; its H160 is then the last 20 bytes of `keccak256(AccountId32)`. Native POT the vault sends there lands in the stash, which bonds it with `staking.bond` / `bond_extra` + `nominate`.
 
-Rewards are paid to the stash, and the relayer returns them through `notifyReward{value}`.
+**The live vault does not point there yet.** `stakingAccount` is the deployer's H160, whose native balance sits in a fallback account (`<h160> + 0xEE…`) that no sr25519 key can sign for, so POT swept there could not be bonded. The relayer refuses to sweep until an admin calls `setStakingAccount` with the stash's H160 (`0x5868ebFF853c05E7feE6212f693b924AF2bbC6ba` for `5DUuK…`). `bondedPrincipal` is 0, so nothing is stranded.
+
+The stash's reward destination is the relayer's EVM fallback account, so staking rewards land directly in the wallet that pays `notifyReward{value}`.
 
 ## Event design
 

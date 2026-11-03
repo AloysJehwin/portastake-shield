@@ -6,6 +6,7 @@ import { Withdraw } from "./pages/Withdraw";
 import { Automate } from "./pages/Automate";
 import { Activity } from "./pages/Activity";
 import { PayPerUse } from "./pages/PayPerUse";
+import { Bridge } from "./pages/Bridge";
 
 export default function App() {
   return (
@@ -13,6 +14,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/deposit" element={<Deposit />} />
+        <Route path="/bridge" element={<Bridge />} />
         <Route path="/withdraw" element={<Withdraw />} />
         <Route path="/automate" element={<Automate />} />
         <Route path="/activity" element={<Activity />} />

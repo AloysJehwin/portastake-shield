@@ -16,7 +16,8 @@ On the surface: deposit stablecoins, earn 8% a year (in POT), automate savings a
 | Smart contracts (`contracts/`) | ✅ 9 contracts built, size-optimized for revive; 56 tests pass (unit, fuzz, and invariant runs of ~8,200 random actions) |
 | Deploy script | ✅ `scripts/deploy-cast.mjs` deploys stages 1–4 to V3 and is re-runnable (reuses anything already live). The staged `.s.sol` scripts are kept for local chains |
 | Testnet deployment | ✅ All four stages live on Portaldot V3 (addresses in `contracts/deployments/420420777.json`); stage 4 (PolicyNFT + MandateManager) cost ~540 tPOT ([details](docs/ARCHITECTURE.md#deploy-cost--staged)) |
-| Relayer (`relayer/`) | 🚧 Chain probe, mandate keeper and x402 facilitator done; staking bridge next |
+| Relayer (`relayer/`) | 🚧 Mandate keeper and x402 facilitator done. Price feed, sweep, bond + nominate, reward reporting and the bridge relay are built; the bridge passes an end-to-end run on three local chains, while staking has only been dry-run against the live chain. ⏳ Not started on testnet (needs a funded stash and keys) |
+| Cross-chain bridge (`TokenBridge`) | ✅ Built and tested locally, configured for Base, Arbitrum, OP, Ethereum Sepolia and Polygon Amoy. ⏳ Not deployed: the Portaldot side needs ~280 tPOT ([steps](docs/ARCHITECTURE.md#cross-chain-bridge)) |
 | Frontend (`frontend/`) | ✅ Vite + React + wagmi + RainbowKit; five pages (Home / Deposit / Withdraw / Automate / Activity); light theme with a glass nav; live-wired to the contracts, stage-aware |
 
 ## Quickstart
@@ -263,7 +264,8 @@ Maria never touched Substrate. She never heard "slashing." She never typed "bond
 | **XusdGateway** | Swaps xUSD ⇄ tUSD 1:1 from its own stock and calls SwapDesk, so xUSD can be deposited into savings and savings withdrawn as xUSD | x402 money earns yield; a payments wallet tops up from savings | ✅ |
 | **PolicyNFT** | Soulbound ERC-721 + ERC-5192, minted by the vault on first deposit, terms recorded in `TermsSnapshot` | Her coverage certificate | ✅ |
 | **MandateManager** | Save / pay mandates (recurring, scheduled, threshold) with caps, expiry, cooldown and slippage floors; permissionless `execute` | Savings run themselves; bills pay themselves | ✅ |
-| **Relayer** | TypeScript daemon, SS58 key + EVM key | Bonds POT, reports rewards, feeds price, keeps mandates running | 🚧 |
+| **TokenBridge** | Lock-and-release tUSD bridge with N-of-M signers, on every supported chain | She can bring money from another chain and start saving in one step | ✅ local, ⏳ testnet |
+| **Relayer** | TypeScript daemon, SS58 key + EVM key | Bonds POT, reports rewards, feeds price, keeps mandates running, carries bridge transfers | 🚧 |
 | **Attester daemon** | Opt-in TS daemon, signs slashing events | Decentralizes the oracle | 🚧 |
 | **Governance (veSTPOT)** | Time-locked stPOT, 24h parameter timelock | Community picks validators, sets insurance % | Later |
 | **MiniLend** | stPOT-collateralized POT loan pool | Composability demo: stPOT works elsewhere | Later |
@@ -309,8 +311,11 @@ contracts/            Foundry project (solc 0.8.28, OpenZeppelin v5.4.0)
   src/                StakingVault, RateEngine, SwapDesk, OracleCommittee, buckets, WPOT, tUSD
   test/               unit, fuzz and invariant suites
   script/Deploy.s.sol deploys + wires everything, writes deployments/<chainId>.json
-relayer/              TypeScript: EVM ↔ Substrate bridge and keeper
+relayer/              TypeScript: EVM ↔ Substrate jobs and the cross-chain bridge
+  src/                price feed, staking, rewards, bridge relay
   scripts/probe.mjs   read-only probe of the live V3 testnet
+  scripts/e2e-local.mjs  bridge end-to-end test on three local chains
+scripts/              staged deploys, including deploy-bridge.mjs
 frontend/             React + wagmi/viem: Maria's savings app
 docs/                 architecture, chain facts, 8% engine, debit engine
 ```
