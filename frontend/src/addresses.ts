@@ -19,6 +19,8 @@ export type Deployment = {
   OracleCommittee: Address;
   /** EIP-3009 stablecoin that x402 payments settle in. */
   xUSD: Address;
+  /** Swaps xUSD in and out of savings through the SwapDesk. */
+  XusdGateway: Address;
 };
 
 const zero = "0x0000000000000000000000000000000000000000" as Address;
@@ -33,6 +35,7 @@ const empty: Deployment = {
   MandateManager: zero,
   OracleCommittee: zero,
   xUSD: zero,
+  XusdGateway: zero,
 };
 
 // The deployments live in `contracts/deployments/<chainId>.json`. `pnpm sync-abis`

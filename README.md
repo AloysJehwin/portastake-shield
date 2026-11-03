@@ -260,6 +260,7 @@ Maria never touched Substrate. She never heard "slashing." She never typed "bond
 | **OracleCommittee** | N-of-M ECDSA attesters | Proves Substrate slashing events to the EVM | ✅ (bonding later) |
 | **WPOT**, **tUSD** | Wrapped tPOT, test stablecoin | Plumbing for the above | ✅ |
 | **xUSD + x402** | EIP-3009 test stablecoin, facilitator and sample paid API (`relayer/x402/`) | Pay-per-request APIs settle on Portaldot | ✅ |
+| **XusdGateway** | Swaps xUSD ⇄ tUSD 1:1 from its own stock and calls SwapDesk, so xUSD can be deposited into savings and savings withdrawn as xUSD | x402 money earns yield; a payments wallet tops up from savings | ✅ |
 | **PolicyNFT** | Soulbound ERC-721 + ERC-5192, minted by the vault on first deposit, terms recorded in `TermsSnapshot` | Her coverage certificate | ✅ |
 | **MandateManager** | Save / pay mandates (recurring, scheduled, threshold) with caps, expiry, cooldown and slippage floors; permissionless `execute` | Savings run themselves; bills pay themselves | ✅ |
 | **Relayer** | TypeScript daemon, SS58 key + EVM key | Bonds POT, reports rewards, feeds price, keeps mandates running | 🚧 |

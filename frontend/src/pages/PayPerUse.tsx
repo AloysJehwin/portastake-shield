@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAccount, useReadContract, useWalletClient } from "wagmi";
+import { Link } from "react-router-dom";
 import type { Address } from "viem";
-import { CheckCircle2, Loader2, AlertCircle, Zap, Receipt } from "lucide-react";
+import { CheckCircle2, Loader2, AlertCircle, Zap, Receipt, ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
+import { isDeployed } from "../addresses";
 import { x402Client, wrapFetchWithPayment, decodePaymentResponseHeader } from "@x402/fetch";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
@@ -151,6 +153,16 @@ export function PayPerUse() {
             args={[FAUCET_AMOUNT]}
             onSuccess={() => void refetchBal()}
           />
+          {isDeployed(p.addresses.XusdGateway) && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link to="/withdraw?asset=xusd" className="btn-secondary">
+                <ArrowUpFromLine size={14} aria-hidden /> Top up xUSD from savings
+              </Link>
+              <Link to="/deposit?asset=xusd" className="btn-secondary">
+                <ArrowDownToLine size={14} aria-hidden /> Save spare xUSD
+              </Link>
+            </div>
+          )}
         </GlassCard>
       </Section>
 
@@ -196,7 +208,11 @@ export function PayPerUse() {
                 "Pay and fetch"
               )}
             </Button>
-            {short && <p className="mt-2 text-xs text-fg-muted">Not enough xUSD. Get some from the faucet above.</p>}
+            {short && (
+              <p className="mt-2 text-xs text-fg-muted">
+                Not enough xUSD. Get some from the faucet above, or top up from your savings.
+              </p>
+            )}
             {payErr && (
               <div className="mt-2 flex items-start gap-2 text-xs text-danger">
                 <AlertCircle size={14} className="mt-0.5" aria-hidden />

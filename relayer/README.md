@@ -39,4 +39,6 @@ PAYER_KEY=0x...       npm run x402:pay           # payer needs xUSD only, no tPO
 
 The web app's **Pay per use** page (`frontend/src/pages/PayPerUse.tsx`) is a browser client for the same API: it reads the price from the 402, has the connected wallet sign the payment, and lists the wallet's past payments. Point it at the API with `VITE_X402_API_URL` (default `http://localhost:4021`); the API allows the dev origin via `CORS_ORIGINS`.
 
+**Savings ⇄ xUSD.** `XusdGateway` (`contracts/src/XusdGateway.sol`) swaps xUSD and tUSD 1:1 from stock it holds and calls the SwapDesk: `depositXusd` turns xUSD into stPOT, `withdrawToXusd` turns stPOT into xUSD for any receiver. The app's Deposit and Withdraw pages offer xUSD, and Pay per use links to both. Keep it stocked: `tUSD.mint(gateway, …)` for deposits, and xUSD from the faucet for withdrawals; a swap it can't cover reverts.
+
 Fund a payer with xUSD from a funded key: `xUSD.faucet(amount)` (up to 1,000 per call), then `transfer` to the payer.

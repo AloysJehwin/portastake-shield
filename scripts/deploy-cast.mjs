@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Deploy PortaStake Shield stages 1-5 to Portaldot V3 via `cast`.
+// Deploy PortaStake Shield stages 1-6 to Portaldot V3 via `cast`.
 //
 // Why not `forge script`: pallet-revive charges a Substrate storage deposit on
 // contract creation that it folds into the EVM gas field (estimateGas returns
@@ -233,6 +233,15 @@ async function main() {
     console.log('✔ stage 5 complete\n');
   }
 
+  // ---- Stage 6: xUSD gateway into savings (needs stage 5) ----
+  // Stock it afterwards: tUSD (mint) for deposits, xUSD (faucet) for withdrawals.
+  if (process.env.SKIP_X402 !== '1' && a.xUSD) {
+    const gw = reuse('XusdGateway') ??
+      deploy('XusdGateway', ['address', 'address', 'address', 'address'], [a.xUSD, tusd, vault, desk]);
+    a.XusdGateway = gw; saveAddrs(a);
+    console.log('✔ stage 6 complete\n');
+  }
+
   // Final metadata
   a.chainId = chainId;
   a.deployer = dep;
@@ -243,7 +252,7 @@ async function main() {
   saveAddrs(a);
 
   console.log('=== deployed ===');
-  for (const k of ['WPOT', 'tUSD', 'InsuranceFund', 'StabilizationReserve', 'StakingVault', 'SwapDesk', 'OracleCommittee', 'PolicyNFT', 'MandateManager', 'xUSD'])
+  for (const k of ['WPOT', 'tUSD', 'InsuranceFund', 'StabilizationReserve', 'StakingVault', 'SwapDesk', 'OracleCommittee', 'PolicyNFT', 'MandateManager', 'xUSD', 'XusdGateway'])
     console.log(`  ${k.padEnd(22)} ${a[k]}`);
 }
 
