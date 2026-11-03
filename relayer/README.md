@@ -6,7 +6,7 @@ Stack:
 
 - `@polkadot/api` for Substrate side (SS58 account, `staking.*` extrinsics)
 - `viem` / `ethers` for EVM side (watch events, call `notifyReward`, submit oracle proofs)
-- `@x402/*` for the x402 facilitator and sample paid API
+- [`@portastake/sdk`](../sdk/README.md) for the x402 facilitator, the sample paid API, the x402 client and the mandate keeper
 
 See `../docs/ARCHITECTURE.md` §"Why pallet-revive matters" for why this daemon exists.
 

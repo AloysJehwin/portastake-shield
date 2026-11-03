@@ -104,6 +104,19 @@ R < owed:  R + reserve draw → users
 - **Slippage**: PAY has a real floor (`amount × (1 − maxSlippageBps)` tUSD out). The SAVE floor is computed from the same desk price in the same transaction, so it guards against rounding only; the desk's price feed (staleness-checked, feeder-set) is what bounds a SAVE.
 - **Keeper**: `execute` is permissionless because revive has no cron. `relayer/scripts/run-mandates.mjs` scans ids `[0, nextId)` with `isDue` and executes each due one; a reverting run leaves the mandate intact and is retried next pass. The keeper chooses only *when* to call, never *how much*.
 
+## SDK (`sdk/`)
+
+`@portastake/sdk` is the reusable layer: the relayer's facilitator, paid API, x402 client and keeper are thin wrappers over it, and other Portaldot apps install it from npm.
+
+| Entry point | Contents |
+|---|---|
+| `@portastake/sdk/x402` | `createPayingFetch` (EIP-3009 xUSD payments, spend-capped, xUSD only), `getOffer`, `getSettlement` |
+| `@portastake/sdk/x402/server` | `xusdPaywall` (Express, wraps `@x402/express`), `x402Cors` |
+| `@portastake/sdk/x402/facilitator` | `createFacilitator`: `/supported`, `/verify`, `/settle`, with legacy transactions for revive |
+| `@portastake/sdk/chain` | `createPortaStake` (vault, desk, stable deposits and withdrawals via SwapDesk or XusdGateway), `mandates`, `runKeeperPass`, explorer links, `estimateDeployCost`, `upfrontCost` |
+
+The ABIs and addresses in `sdk/src` are written by `frontend/scripts/sync-abis.ts`, the same step that updates the frontend.
+
 ## Decimals handling
 
 - Substrate side: tPOT has 14 decimals.
