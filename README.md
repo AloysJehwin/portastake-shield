@@ -5,7 +5,11 @@
 Built for [Portaldot Hacker House 2026](https://dorahacks.io/hackathon/portaldot-hacker-house-2026) — Ecosystem DApps track.
 
 Under the hood: a liquid-staking token for Portaldot V3 with built-in slashing insurance and a reserve-backed 8% yield target.
-On the surface: deposit stablecoins, earn 8% a year (in POT), automate savings and bill payments, withdraw anytime. A misbehaving validator never dents your balance.
+On the surface: deposit stablecoins, target 8% a year (in POT), automate savings and bill payments, withdraw anytime. If a validator is slashed, the insurance fund covers the loss, up to its balance.
+
+**Live app:** <https://portastake-shield.vercel.app> · **Contracts and transaction hashes:** [`docs/DEPLOYMENTS.md`](docs/DEPLOYMENTS.md)
+
+**Team:** Aloys Jehwin ([@AloysJehwin](https://github.com/AloysJehwin)), Clatson ([@clatsonin](https://github.com/clatsonin))
 
 ---
 
@@ -13,10 +17,10 @@ On the surface: deposit stablecoins, earn 8% a year (in POT), automate savings a
 
 | Piece | State |
 |---|---|
-| Smart contracts (`contracts/`) | ✅ 9 contracts built, size-optimized for revive; 56 tests pass (unit, fuzz, and invariant runs of ~8,200 random actions) |
+| Smart contracts (`contracts/`) | ✅ 11 contracts deployed, size-optimized for revive; 90 tests pass (unit, fuzz and invariant) |
 | Deploy script | ✅ `scripts/deploy-cast.mjs` deploys stages 1–4 to V3 and is re-runnable (reuses anything already live). The staged `.s.sol` scripts are kept for local chains |
-| Testnet deployment | ✅ All four stages live on Portaldot V3 (addresses in `contracts/deployments/420420777.json`); stage 4 (PolicyNFT + MandateManager) cost ~540 tPOT ([details](docs/ARCHITECTURE.md#deploy-cost--staged)) |
-| Relayer (`relayer/`) | 🚧 Mandate keeper and x402 facilitator done. Price feed, sweep, bond + nominate, reward reporting and the bridge relay are built; the bridge passes an end-to-end run on three local chains, while staking has only been dry-run against the live chain. ⏳ Not started on testnet (needs a funded stash and keys) |
+| Testnet deployment | ✅ All four stages live on Portaldot V3 (addresses and transaction hashes in [`docs/DEPLOYMENTS.md`](docs/DEPLOYMENTS.md)); stage 4 (PolicyNFT + MandateManager) cost ~540 tPOT ([details](docs/ARCHITECTURE.md#deploy-cost--staged)) |
+| Relayer (`relayer/`) | 🚧 Mandate keeper and x402 facilitator done. Price feed, sweep, bond + nominate, reward reporting and the bridge relay are built; the bridge passes an end-to-end run on three local chains, while staking has only been dry-run against the live chain. ⏳ The staking daemon isn't running on testnet yet (needs a funded stash and keys). The price job also runs hourly from GitHub Actions (`.github/workflows/price-feed.yml`) |
 | Cross-chain bridge | ✅ Configured on Portaldot, Base, Arbitrum, OP, Ethereum Sepolia and Polygon Amoy with no contracts: the relayer wallet holds each side (tUSD on Portaldot, testnet USDC elsewhere), and the app's `/api/bridge/claim` function delivers transfers on demand ([details](docs/ARCHITECTURE.md#cross-chain-bridge)) |
 | API gateway | ✅ Turns any public HTTP API into a paid x402 endpoint settled in xUSD, from the On-chain tools page. Stateless: the endpoint's config lives in its URL, and API keys are sealed server-side |
 | SDK (`sdk/`) | ✅ `@portastake/sdk`: x402 paywall, payer and facilitator, plus vault, desk, mandate and keeper clients, explorer links and a `portastake` CLI ([README](sdk/README.md)) |
@@ -26,8 +30,10 @@ On the surface: deposit stablecoins, earn 8% a year (in POT), automate savings a
 
 [`@portastake/sdk`](sdk/README.md) puts the x402 payments and the protocol tooling in one npm package, so any Portaldot app can use them:
 
+It isn't on the npm registry yet, so install the packed build from this repo:
+
 ```sh
-npm i @portastake/sdk viem
+npm i ./frontend/vendor/portastake-sdk-0.1.0.tgz viem
 npx portastake stats                      # live vault numbers
 npx portastake offer <x402 url>           # what a paid tool charges
 ```
@@ -329,14 +335,15 @@ If this ships, three real things change:
 
 ```
 contracts/            Foundry project (solc 0.8.28, OpenZeppelin v5.4.0)
-  src/                StakingVault, RateEngine, SwapDesk, OracleCommittee, buckets, WPOT, tUSD
+  src/                StakingVault, RateEngine, SwapDesk, OracleCommittee, buckets, WPOT, tUSD, ...
   test/               unit, fuzz and invariant suites
-  script/Deploy.s.sol deploys + wires everything, writes deployments/<chainId>.json
+  script/             staged Foundry deploy scripts for local chains
+  deployments/        live addresses by chain ID
 relayer/              TypeScript: EVM ↔ Substrate jobs and the cross-chain bridge
   src/                price feed, staking, rewards, bridge relay
   scripts/probe.mjs   read-only probe of the live V3 testnet
   scripts/e2e-local.mjs  bridge end-to-end test on three local chains
-scripts/              staged deploys, sync-bridge.mjs (bridge setup, no transactions)
+scripts/              deploy-cast.mjs (testnet deploys), sync-bridge.mjs (bridge setup, no transactions)
 sdk/                  @portastake/sdk: x402 paid tools + on-chain tooling, and the portastake CLI
 frontend/             React + wagmi/viem: Maria's savings app
 docs/                 architecture, chain facts, 8% engine, debit engine
@@ -361,6 +368,15 @@ See [`contracts/README.md`](contracts/README.md) for per-contract details and [`
 - **Track**: Ecosystem DApps (track id 4626)
 - **Final submission deadline**: Nov 6, 2026, 04:00 UTC
 - **License**: MIT
+
+## Third-party code
+
+Built on these open-source projects, used under their own licenses:
+
+- **Contracts:** [OpenZeppelin Contracts](https://github.com/OpenZeppelin/openzeppelin-contracts), [Solady](https://github.com/vectorized/solady), [forge-std](https://github.com/foundry-rs/forge-std), [Foundry](https://github.com/foundry-rs/foundry)
+- **Chain access:** [viem](https://github.com/wevm/viem), [ethers](https://github.com/ethers-io/ethers.js), [@polkadot/api](https://github.com/polkadot-js/api)
+- **Frontend:** [React](https://github.com/facebook/react), [wagmi](https://github.com/wevm/wagmi), [RainbowKit](https://github.com/rainbow-me/rainbowkit), [Vite](https://github.com/vitejs/vite), [Tailwind CSS](https://github.com/tailwindlabs/tailwindcss)
+- **Payments and server:** [x402](https://github.com/x402-foundation/x402) (`@x402/core`, `@x402/evm`, `@x402/fetch`), [Express](https://github.com/expressjs/express)
 
 ---
 
