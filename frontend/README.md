@@ -19,6 +19,7 @@ Minimalist light-theme web app for PortaStake Shield, live-wired to the contract
 | `/deposit` | tUSD → stPOT via `SwapDesk.depositWithStable`, plus a native tPOT alt route via `vault.depositNative`. Live price, fee, slippage, approve-then-deposit flow. | SwapDesk address ≠ 0 (stage 2) |
 | `/withdraw` | Instant redeem via desk if under the hot reserve; otherwise `requestUnstake`. Lists the user's pending unstake queue. | — |
 | `/automate` | Save-on-autopilot: SAVE RECURRING mandates with pause/resume/cancel. Falls back to a muted empty state while `MandateManager` is undeployed. | MandateManager ≠ 0 (stage 4b) |
+| `/tools` | On-chain tools: vault health, desk price check, wallet report and mandate scan, each paid per run in xUSD with x402. The wallet signs; the tools (`api/tools/[name].ts`, Vercel functions) settle the payment on Portaldot through an in-process facilitator. Needs `FACILITATOR_KEY` in the Vercel env; locally run `FACILITATOR_KEY=0x… pnpm tools` next to `pnpm dev`. `/pay-per-use` redirects here. | xUSD ≠ 0 (stage 5) |
 | `/activity` | Last 10,000 blocks of the user's events: `StableDeposited`, `StableRedeemed`, `UnstakeRequested`, `UnstakeFulfilled`, `SlashCovered`, `MandateExecuted`. | — |
 
 ## Setup

@@ -1,4 +1,4 @@
-// x402 client, built on @portastake/sdk: calls the paid API, signs the xUSD payment when it answers
+// x402 client, built on @portastake/sdk: calls the paid tool, signs the xUSD payment when it answers
 // 402, and retries.
 //
 //   cd relayer && PAYER_KEY=0x... node x402/client.mjs [url]

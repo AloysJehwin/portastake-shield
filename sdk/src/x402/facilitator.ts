@@ -4,6 +4,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { x402Facilitator } from "@x402/core/facilitator";
 import { registerExactEvmScheme } from "@x402/evm/exact/facilitator";
 import { toFacilitatorEvmSigner } from "@x402/evm";
+import type { FacilitatorClient } from "@x402/core/server";
 import { DEFAULT_RPC, NETWORK, portaldotChain } from "../network.js";
 
 export type FacilitatorOptions = {
@@ -27,7 +28,13 @@ export type FacilitatorOptions = {
  * createFacilitator({ privateKey: process.env.FACILITATOR_KEY }).app.listen(4020);
  * ```
  */
-export function createFacilitator(opts: FacilitatorOptions): { app: Express; address: `0x${string}`; facilitator: x402Facilitator } {
+export function createFacilitator(opts: FacilitatorOptions): {
+  app: Express;
+  address: `0x${string}`;
+  facilitator: x402Facilitator;
+  /** The facilitator as a client, for `xusdPaywall({ facilitator })` in the same process. */
+  client: FacilitatorClient;
+} {
   const rpc = opts.rpc ?? DEFAULT_RPC;
   const chain = portaldotChain(rpc);
   const account = privateKeyToAccount(opts.privateKey);
@@ -85,5 +92,21 @@ export function createFacilitator(opts: FacilitatorOptions): { app: Express; add
     });
   }
 
-  return { app, address: account.address, facilitator };
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const client: FacilitatorClient = {
+    verify: async (p, r) => {
+      const out = (await facilitator.verify(p as any, r as any)) as any;
+      opts.onResult?.("verify", !!out.isValid, { reason: out.invalidReason });
+      return out;
+    },
+    settle: async (p, r) => {
+      const out = (await facilitator.settle(p as any, r as any)) as any;
+      opts.onResult?.("settle", !!out.success, { transaction: out.transaction, reason: out.errorReason });
+      return out;
+    },
+    getSupported: async () => facilitator.getSupported() as any,
+  };
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+
+  return { app, address: account.address, facilitator, client };
 }

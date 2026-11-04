@@ -2,7 +2,7 @@ import type { Request, Response, NextFunction, RequestHandler } from "express";
 import type { Address } from "viem";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
-import { HTTPFacilitatorClient } from "@x402/core/server";
+import { HTTPFacilitatorClient, type FacilitatorClient } from "@x402/core/server";
 import { NETWORK, XUSD_DOMAIN } from "../network.js";
 import { XUSD, xusd } from "./index.js";
 
@@ -18,8 +18,13 @@ export type PaidRoute = {
 };
 
 export type PaywallOptions = {
-  /** x402 facilitator that verifies and settles payments, e.g. one started with `createFacilitator`. */
-  facilitatorUrl: string;
+  /** URL of an x402 facilitator that verifies and settles payments, e.g. one started with `createFacilitator`. */
+  facilitatorUrl?: string;
+  /**
+   * A facilitator to call directly instead of over HTTP: `createFacilitator(...).client`. Useful in
+   * serverless functions, where the paid route and the facilitator run in the same process.
+   */
+  facilitator?: FacilitatorClient;
   /** Keys are "METHOD /path", as in x402: { "GET /api/report": { price: "0.01", payTo } }. */
   routes: Record<string, PaidRoute>;
   /** Token to charge in. Defaults to xUSD on Portaldot V3. */
@@ -47,7 +52,9 @@ export function xusdPaywall(opts: PaywallOptions): RequestHandler {
   const network = opts.network ?? NETWORK;
   const asset = opts.asset ?? XUSD;
   const extra = opts.assetDomain ?? XUSD_DOMAIN;
-  const server = new x402ResourceServer(new HTTPFacilitatorClient({ url: opts.facilitatorUrl })).register(
+  const client = opts.facilitator ?? (opts.facilitatorUrl ? new HTTPFacilitatorClient({ url: opts.facilitatorUrl }) : null);
+  if (!client) throw new Error("xusdPaywall needs facilitatorUrl or facilitator");
+  const server = new x402ResourceServer(client).register(
     network as never,
     new ExactEvmScheme(),
   );

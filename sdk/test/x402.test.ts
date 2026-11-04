@@ -57,6 +57,15 @@ describe("paywall", () => {
     expect(other.headers.get("access-control-allow-origin")).toBeNull();
   });
 
+  it("works with an in-process facilitator", async () => {
+    const app = express();
+    const { client } = createFacilitator({ privateKey: generatePrivateKey() });
+    app.use(xusdPaywall({ facilitator: client, routes: { "GET /tool": { price: "0.02", payTo: PAY_TO } } }));
+    app.get("/tool", (_req, res) => res.json({ ok: true }));
+    const url = await listen(app);
+    expect((await getOffer(`${url}/tool`))!.amount).toBe(20_000n);
+  });
+
   it("refuses to sign above the spend limit", async () => {
     const pay = createPayingFetch({ payer: privateKeyToAccount(generatePrivateKey()), maxPerRequest: "0.001" });
     await expect(pay(`${api}/paid`)).rejects.toThrow();
