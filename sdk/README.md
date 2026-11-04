@@ -1,8 +1,8 @@
 # @portastake/sdk
 
-Pay-per-use APIs and on-chain tooling for [Portaldot](https://portaldot.io).
+Paid on-chain tools and PortaStake tooling for [Portaldot](https://portaldot.io).
 
-- **`@portastake/sdk/x402`**: charge for API requests in xUSD with [x402](https://github.com/x402-foundation/x402), and pay for them from any wallet. Payers sign; they never pay gas.
+- **`@portastake/sdk/x402`**: charge per run for your tools and APIs in xUSD with [x402](https://github.com/x402-foundation/x402), and pay for them from any wallet. Payers sign; they never pay gas.
 - **`@portastake/sdk/chain`**: the PortaStake Shield vault, desk and mandates, a keeper, Portaldot explorer links, and helpers for Portaldot's EVM (pallet-revive).
 - **`portastake`**: a CLI over both.
 
@@ -13,11 +13,11 @@ npm i express        # only for the paywall and the facilitator
 
 Defaults point at Portaldot V3 testnet (`eip155:420420777`) and its live PortaStake deployment, so nothing needs configuring to start.
 
-## Pay per use (x402)
+## Paid tools (x402)
 
-x402 brings back HTTP `402 Payment Required`. A paid route answers 402 with a price. The client signs an EIP-3009 xUSD authorization and retries. A facilitator then settles it on Portaldot and pays the gas. Funds go straight from payer to payee: the signature fixes the amount and the recipient, and each authorization works once.
+x402 brings back HTTP `402 Payment Required`. A paid tool answers 402 with a price. The client signs an EIP-3009 xUSD authorization and retries. A facilitator then settles it on Portaldot and pays the gas. Funds go straight from payer to payee: the signature fixes the amount and the recipient, and each authorization works once.
 
-### Charge for an API
+### Charge for a tool
 
 ```ts
 import express from "express";
@@ -35,7 +35,7 @@ app.get("/api/report", (_req, res) => res.json({ hello: "paid world" }));
 app.listen(4021);
 ```
 
-### Pay for an API
+### Pay for a tool
 
 ```ts
 import { privateKeyToAccount } from "viem/accounts";
@@ -57,7 +57,14 @@ import { createFacilitator } from "@portastake/sdk/x402/facilitator";
 createFacilitator({ privateKey: process.env.FACILITATOR_KEY }).app.listen(4020);
 ```
 
-This serves the standard facilitator API (`GET /supported`, `POST /verify`, `POST /settle`), so any x402 server can use it. Give it a dedicated key with a small tPOT balance: it pays gas for each settlement, about 4 tPOT on Portaldot V3.
+In a serverless function, run the facilitator in the same process instead of as a separate server:
+
+```ts
+const { client } = createFacilitator({ privateKey: process.env.FACILITATOR_KEY });
+app.use(xusdPaywall({ facilitator: client, routes: { "GET /api/tools/report": { price: "0.01", payTo } } }));
+```
+
+The standalone facilitator serves the standard facilitator API (`GET /supported`, `POST /verify`, `POST /settle`), so any x402 server can use it. Give it a dedicated key with a small tPOT balance: it pays gas for each settlement, about 4 tPOT on Portaldot V3.
 
 ## On-chain tooling
 
@@ -102,12 +109,12 @@ portastake price
 portastake position 0x2f1B…510E
 portastake explorer 0x2f1B…510E                  # explorer link + SS58
 portastake deploy-cost out/MyContract.sol/MyContract.json
-portastake offer https://api.example/report      # what an x402 API charges
+portastake offer https://api.example/report      # what an x402 tool charges
 
 PRIVATE_KEY=0x… portastake save 5 --asset xUSD
 PRIVATE_KEY=0x… portastake keeper --loop 60
 FACILITATOR_KEY=0x… portastake facilitator
-PAY_TO=0x… portastake paywall-demo               # sample paid API at :4021
+PAY_TO=0x… portastake paywall-demo               # sample paid tool at :4021
 PAYER_KEY=0x… portastake pay http://localhost:4021/api/vault-stats --max 0.05
 ```
 

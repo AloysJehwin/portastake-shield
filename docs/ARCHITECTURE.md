@@ -106,7 +106,7 @@ R < owed:  R + reserve draw → users
 
 ## SDK (`sdk/`)
 
-`@portastake/sdk` is the reusable layer: the relayer's facilitator, paid API, x402 client and keeper are thin wrappers over it, and other Portaldot apps install it from npm.
+`@portastake/sdk` is the reusable layer: the app's on-chain tools (`frontend/api/`) and the relayer's facilitator, sample tool, x402 client and keeper are thin wrappers over it, and other Portaldot apps install it from npm.
 
 | Entry point | Contents |
 |---|---|

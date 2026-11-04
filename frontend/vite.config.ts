@@ -11,5 +11,7 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     port: 5173,
+    // On-chain tools: Vercel functions in production; `pnpm tools` locally.
+    proxy: { "/api": process.env.TOOLS_URL ?? "http://127.0.0.1:4021" },
   },
 });
