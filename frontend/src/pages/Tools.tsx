@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useAccount, useReadContract, useWalletClient } from "wagmi";
 import { Link } from "react-router-dom";
 import { isAddress, type Address, type WalletClient } from "viem";
@@ -13,14 +13,24 @@ import { TxLink, AddressLink } from "../components/ExplorerLink";
 import { WalletGate } from "../components/WalletGate";
 import { GlassCard, Card, Section, KeyValue, Divider, Empty, Button } from "../components/primitives";
 import { formatUsd, timeAgo } from "../format";
+import { GatewaySection } from "./Gateway";
 
 // Same origin by default: the tools are Vercel functions of this app (`pnpm tools` in development).
 const TOOLS_URL = ((import.meta.env.VITE_TOOLS_URL as string | undefined) ?? "").replace(/\/$/, "");
 const FAUCET_AMOUNT = 10_000_000n; // 10 xUSD
 const MAX_PER_RUN = 1_000_000n; // the wallet never signs more than 1 xUSD for one run
 
-type ToolParam = { name: string; label: string; placeholder?: string; fromWallet?: boolean };
-type Tool = { id: string; name: string; summary: string; price: string; params?: ToolParam[] };
+export type ToolParam = { name: string; label: string; placeholder?: string; fromWallet?: boolean };
+export type Tool = {
+  id: string;
+  name: string;
+  summary: string;
+  price: string;
+  params?: ToolParam[];
+  /** Full path for endpoints outside /api/tools (gateway endpoints). */
+  endpoint?: string;
+  method?: "GET" | "POST";
+};
 type Catalog = { tools: Tool[]; payTo: Address; live: boolean };
 type Step = "idle" | "signing" | "settling" | "done" | "error";
 
@@ -144,6 +154,14 @@ export function Tools() {
         )}
       </Section>
 
+      <GatewaySection
+        balance={balance}
+        onPaid={onPaid}
+        walletClient={walletClient}
+        address={address}
+        xusd={xusd}
+      />
+
       <Section title="Your runs">
         {history.data.length === 0 ? (
           <Empty
@@ -154,7 +172,7 @@ export function Tools() {
         ) : (
           <Card>
             {history.data.map((h) => (
-              <div key={h.txHash} className="flex items-center justify-between gap-3 py-2 border-b border-line last:border-b-0 text-sm">
+              <div key={h.txHash} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2 border-b border-line last:border-b-0 text-sm">
                 <span className="num text-fg">{formatUsd(h.amount, 4)} xUSD</span>
                 <span className="text-xs text-fg-muted">→ <AddressLink address={h.to} /></span>
                 <TxLink hash={h.txHash} blockNumber={h.blockNumber} />
@@ -177,7 +195,7 @@ type ToolCardProps = {
   xusd: Address;
 };
 
-function ToolCard({ tool, balance, onPaid, walletClient, address, xusd }: ToolCardProps) {
+export function ToolCard({ tool, balance, onPaid, walletClient, address, xusd, extra }: ToolCardProps & { extra?: ReactNode }) {
   const [params, setParams] = useState<Record<string, string>>(() =>
     Object.fromEntries((tool.params ?? []).map((q) => [q.name, q.fromWallet && address ? address : ""])),
   );
@@ -190,22 +208,33 @@ function ToolCard({ tool, balance, onPaid, walletClient, address, xusd }: ToolCa
       return next;
     });
   }, [address, tool.params]);
-  const query = new URLSearchParams(params).toString();
-  const path = `/api/tools/${tool.id}${query ? `?${query}` : ""}`;
-  const paramsOk = (tool.params ?? []).every((q) => q.name !== "address" || isAddress(params[q.name] ?? ""));
+  const isPost = tool.method === "POST";
+  const { body: postBody = "", query: rawQuery = "", ...named } = params;
+  const query = [new URLSearchParams(named).toString(), rawQuery.replace(/^\?/, "")].filter(Boolean).join("&");
+  const path = `${tool.endpoint ?? `/api/tools/${tool.id}`}${query ? `?${query}` : ""}`;
+  const bodyOk = !isPost || (() => {
+    try {
+      JSON.parse(postBody || "{}");
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  const paramsOk = bodyOk && (tool.params ?? []).every((q) => q.name !== "address" || isAddress(params[q.name] ?? ""));
 
   const [offer, setOffer] = useState<Offer | null>(null);
   const [offerErr, setOfferErr] = useState<string | null>(null);
   useEffect(() => {
     if (!paramsOk) return;
     let gone = false;
-    getOffer(`${TOOLS_URL}${path}`)
+    setOffer(null);
+    getOffer(`${TOOLS_URL}${path}`, isPost ? { method: "POST", headers: { "content-type": "application/json" }, body: postBody || "{}" } : undefined)
       .then((o) => !gone && (setOffer(o), setOfferErr(null)))
       .catch((e) => !gone && setOfferErr(e instanceof Error ? e.message : String(e)));
     return () => {
       gone = true;
     };
-  }, [path, paramsOk]);
+  }, [path, paramsOk, isPost, postBody]);
 
   const [step, setStep] = useState<Step>("idle");
   const [result, setResult] = useState<unknown>(null);
@@ -230,9 +259,20 @@ function ToolCard({ tool, balance, onPaid, walletClient, address, xusd }: ToolCa
     setResult(null);
     setSettleTx(null);
     try {
-      const r = await payFetch(`${TOOLS_URL}${path}`);
-      if (!r.ok) throw new Error(`the tool answered ${r.status}`);
-      setResult(await r.json());
+      const r = await payFetch(
+        `${TOOLS_URL}${path}`,
+        isPost ? { method: "POST", headers: { "content-type": "application/json" }, body: postBody || "{}" } : undefined,
+      );
+      if (!r.ok) {
+        const detail = await r.json().then((j: { error?: string }) => j.error).catch(() => undefined);
+        throw new Error(`the tool answered ${r.status}${detail ? `: ${detail}` : ""}`);
+      }
+      const text = await r.text();
+      try {
+        setResult(JSON.parse(text));
+      } catch {
+        setResult(text);
+      }
       setSettleTx(getSettlement(r)?.transaction ?? null);
       setStep("done");
       onPaid();
@@ -253,16 +293,29 @@ function ToolCard({ tool, balance, onPaid, walletClient, address, xusd }: ToolCa
         <span className="inline-flex items-center justify-center w-9 h-9 rounded-sm bg-surface border border-line shrink-0">
           <Wrench size={16} aria-hidden />
         </span>
-        <div className="min-w-0">
-          <div className="text-sm text-fg">{tool.name}</div>
-          <div className="text-xs text-fg-muted">{tool.summary}</div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm text-fg break-words">{tool.name}</div>
+          <div className="text-xs text-fg-muted break-words">{tool.summary}</div>
         </div>
+        {extra}
       </div>
       <div className="text-xs text-fg-subtle num truncate mb-3" title={absolute(path)}>
-        GET {absolute(path)}
+        {isPost ? "POST" : "GET"} {absolute(path)}
       </div>
 
-      {(tool.params ?? []).map((q) => (
+      {(tool.params ?? []).map((q) =>
+        q.name === "body" ? (
+          <label key={q.name} className="block mb-3">
+            <span className="text-xs text-fg-muted">{q.label}</span>
+            <textarea
+              className="mt-1 w-full min-h-[72px] px-3 py-2 rounded-sm border border-line bg-bg text-xs num"
+              value={params.body ?? ""}
+              placeholder={q.placeholder}
+              onChange={(e) => setParams((s) => ({ ...s, body: e.target.value }))}
+            />
+            {!bodyOk && <span className="text-xs text-danger">Body must be JSON.</span>}
+          </label>
+        ) : (
         <label key={q.name} className="block mb-3">
           <span className="text-xs text-fg-muted">{q.label}</span>
           <input
@@ -272,7 +325,8 @@ function ToolCard({ tool, balance, onPaid, walletClient, address, xusd }: ToolCa
             onChange={(e) => setParams((s) => ({ ...s, [q.name]: e.target.value.trim() }))}
           />
         </label>
-      ))}
+        ),
+      )}
 
       {offerErr ? (
         <div className="flex items-start gap-2 text-xs text-danger mb-3">
