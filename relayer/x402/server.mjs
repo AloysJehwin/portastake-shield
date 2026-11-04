@@ -1,4 +1,4 @@
-// Sample x402 paid API, built on @portastake/sdk: live PortaStake vault stats, 0.01 xUSD per request.
+// Sample x402 paid tool, built on @portastake/sdk: live PortaStake vault stats, 0.01 xUSD per request.
 //
 //   cd relayer && PAY_TO=0x... node x402/server.mjs        (facilitator must be running)
 //
@@ -39,5 +39,5 @@ app.get('/api/vault-stats', async (_req, res) => {
 });
 
 app.listen(API_PORT, () => {
-  console.log(`paid API → http://localhost:${API_PORT}/api/vault-stats  (${PRICE} xUSD → ${payTo})`);
+  console.log(`paid tool → http://localhost:${API_PORT}/api/vault-stats  (${PRICE} xUSD → ${payTo})`);
 });

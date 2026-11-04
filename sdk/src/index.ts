@@ -1,5 +1,5 @@
 /**
- * @portastake/sdk: pay-per-use (x402) and on-chain tooling for Portaldot.
+ * @portastake/sdk: paid on-chain tools (x402) and PortaStake tooling for Portaldot.
  *
  * - `@portastake/sdk/chain`: PortaStake vault, desk and mandate clients, a keeper, explorer links
  *   and Portaldot transaction helpers.

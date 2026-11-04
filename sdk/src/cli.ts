@@ -23,7 +23,7 @@ import { xusdPaywall, x402Cors } from "./x402/server.js";
 import { createFacilitator } from "./x402/facilitator.js";
 import portaldotV3 from "./deployments/420420777.json";
 
-const HELP = `portastake: pay-per-use (x402) and on-chain tooling for Portaldot
+const HELP = `portastake: paid on-chain tools (x402) and PortaStake tooling for Portaldot
 
 Reads (no key needed)
   stats                         vault totals, rates and safety funds
@@ -45,7 +45,7 @@ Writes (key from PRIVATE_KEY)
 x402
   pay <url> [--max 1]           call an x402 API, paying in xUSD (key from PAYER_KEY or PRIVATE_KEY)
   facilitator [--port 4020]     run an x402 facilitator (key from FACILITATOR_KEY or PRIVATE_KEY)
-  paywall-demo [--port 4021]    run a sample paid API: live vault stats for 0.01 xUSD
+  paywall-demo [--port 4021]    run a sample paid tool: live vault stats for 0.01 xUSD
                                 (PAY_TO, FACILITATOR_URL, CORS_ORIGINS from the environment)
 
 Options
@@ -279,7 +279,7 @@ async function main() {
           at: new Date().toISOString(),
         });
       });
-      app.listen(port, () => console.log(`paid API → http://localhost:${port}/api/vault-stats  (${price} xUSD → ${payTo}, facilitator ${facilitatorUrl})`));
+      app.listen(port, () => console.log(`paid tool → http://localhost:${port}/api/vault-stats  (${price} xUSD → ${payTo}, facilitator ${facilitatorUrl})`));
       return;
     }
     default:
