@@ -1,18 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  concatHex,
   decodeEventLog,
   encodeAbiParameters,
+  encodeFunctionData,
+  encodePacked,
   keccak256,
   parseUnits,
   zeroAddress,
+  type Address,
   type Hash,
+  type Hex,
 } from "viem";
 import {
   useAccount,
   useChainId,
   usePublicClient,
   useReadContract,
+  useSendTransaction,
   useSwitchChain,
   useWaitForTransactionReceipt,
   useWriteContract,
@@ -34,6 +40,12 @@ import { WPOTAbi } from "../abi/WPOT";
 const BPS = 10_000n;
 const FAUCET_AMOUNT = 1_000_000_000n; // 1,000 tUSD
 const HISTORY_KEY = "portastake.bridge.transfers";
+// Portaldot has no bridge contract to enforce a limit, so the page keeps to the relayer's payout limit.
+const WALLET_MAX_PER_TX = 10_000_000n; // 10 tUSD
+// Routing and payout tags sit after the normal calldata. Must match relayer/src/bridge/tags.ts.
+const BRIDGE_OUT_MAGIC = "0x50534231";
+const PAYOUT_MAGIC = "50534252";
+const PAYOUT_SEARCH_BLOCKS = 5_000n;
 
 const hub = bridgeChains.find((c) => c.hub)!;
 const live = bridgeChains.filter((c) => bridgeDeployments[c.chainId]);
@@ -44,6 +56,7 @@ type Transfer = {
   nonce: string;
   amount: string;
   wantsSave: boolean;
+  to?: Address;
   txHash: Hash;
 };
 
@@ -96,6 +109,7 @@ export function Bridge() {
   }, [amount]);
 
   const onSource = walletChainId === srcId;
+  const fromWallet = srcDep?.custody === "wallet";
   const savingIn = dstId === hub.chainId && saveIt;
 
   const token = srcDep?.token ?? zeroAddress;
@@ -113,14 +127,14 @@ export function Bridge() {
     abi: MockStableAbi,
     functionName: "allowance",
     args: [user ?? zeroAddress, srcDep?.TokenBridge ?? zeroAddress],
-    query: { enabled: !!srcDep && !!user },
+    query: { enabled: !!srcDep && !!user && !fromWallet },
   });
   const maxPerTx = useReadContract({
     chainId: srcId,
     address: srcDep?.TokenBridge ?? zeroAddress,
     abi: TokenBridgeAbi,
     functionName: "maxPerTx",
-    query: { enabled: !!srcDep },
+    query: { enabled: !!srcDep && !fromWallet },
   });
   const dstLiquidity = useReadContract({
     chainId: dstId,
@@ -136,7 +150,7 @@ export function Bridge() {
 
   const usdBalance = balance.data as bigint | undefined;
   const approved = (allowance.data as bigint | undefined) ?? 0n;
-  const cap = maxPerTx.data as bigint | undefined;
+  const cap = fromWallet ? WALLET_MAX_PER_TX : (maxPerTx.data as bigint | undefined);
   const liquidity = dstLiquidity.data as bigint | undefined;
 
   const overBalance = usdBalance !== undefined && parsed > usdBalance;
@@ -151,7 +165,15 @@ export function Bridge() {
         ? `${dst?.name} can only pay out ${formatUsd(liquidity)} right now.`
         : undefined;
 
-  const { writeContract, data: lockHash, isPending: signing, error: lockError, reset } = useWriteContract();
+  const write = useWriteContract();
+  const send = useSendTransaction();
+  const lockHash = fromWallet ? send.data : write.data;
+  const signing = fromWallet ? send.isPending : write.isPending;
+  const lockError = fromWallet ? send.error : write.error;
+  const reset = () => {
+    write.reset();
+    send.reset();
+  };
   const lockReceipt = useWaitForTransactionReceipt({ hash: lockHash, chainId: srcId });
 
   useEffect(() => {
@@ -159,16 +181,23 @@ export function Bridge() {
     if (!receipt || !lockHash || dstId === undefined) return;
     for (const log of receipt.logs) {
       try {
-        const event = decodeEventLog({ abi: TokenBridgeAbi, data: log.data, topics: log.topics });
-        if (event.eventName !== "Locked") continue;
-        const next: Transfer = {
-          srcChainId: srcId,
-          dstChainId: dstId,
-          nonce: event.args.nonce.toString(),
-          amount: event.args.amount.toString(),
-          wantsSave: event.args.minShares > 0n,
-          txHash: lockHash,
-        };
+        let transfer: Pick<Transfer, "nonce" | "amount" | "wantsSave">;
+        if (fromWallet) {
+          const event = decodeEventLog({ abi: MockStableAbi, data: log.data, topics: log.topics });
+          if (event.eventName !== "Transfer") continue;
+          // No contract counts these on Portaldot, so a transfer's position in the chain identifies it.
+          const nonce = (receipt.blockNumber << 16n) | BigInt(log.logIndex);
+          transfer = { nonce: nonce.toString(), amount: event.args.value.toString(), wantsSave: false };
+        } else {
+          const event = decodeEventLog({ abi: TokenBridgeAbi, data: log.data, topics: log.topics });
+          if (event.eventName !== "Locked") continue;
+          transfer = {
+            nonce: event.args.nonce.toString(),
+            amount: event.args.amount.toString(),
+            wantsSave: event.args.minShares > 0n,
+          };
+        }
+        const next: Transfer = { ...transfer, srcChainId: srcId, dstChainId: dstId, to: user, txHash: lockHash };
         setTransfers((prev) => {
           const items = [next, ...prev.filter((t) => t.txHash !== lockHash)];
           saveHistory(items);
@@ -180,13 +209,33 @@ export function Bridge() {
         allowance.refetch();
         return;
       } catch {
-        // Not one of the bridge's events (the token's Transfer, for one).
+        // Not an event this flow cares about.
       }
     }
   }, [lockReceipt.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const busy = signing || (!!lockHash && lockReceipt.isLoading);
   const minShares = savingIn ? (quote?.minShares ?? 0n) : 0n;
+
+  function submit() {
+    if (fromWallet) {
+      // A plain tUSD transfer to the relayer wallet, with the destination in the extra calldata.
+      const transfer = encodeFunctionData({
+        abi: MockStableAbi,
+        functionName: "transfer",
+        args: [srcDep.TokenBridge, parsed],
+      });
+      const route = encodePacked(["bytes4", "uint64", "address"], [BRIDGE_OUT_MAGIC, BigInt(dstId!), user!]);
+      send.sendTransaction({ to: srcDep.token, data: concatHex([transfer, route]) });
+      return;
+    }
+    write.writeContract({
+      address: srcDep.TokenBridge,
+      abi: TokenBridgeAbi,
+      functionName: "bridge",
+      args: [BigInt(dstId!), user!, parsed, minShares],
+    });
+  }
 
   if (live.length < 2) {
     return (
@@ -299,7 +348,7 @@ export function Bridge() {
                   onSuccess={() => balance.refetch()}
                 />
               )}
-              {parsed > 0n && approved < parsed ? (
+              {!fromWallet && parsed > 0n && approved < parsed ? (
                 <TxButton
                   label="Allow the bridge to use your tUSD"
                   address={token}
@@ -311,14 +360,7 @@ export function Bridge() {
               ) : (
                 <Button
                   disabled={parsed === 0n || !!blocker || busy || !user || !dstId || (savingIn && !quote)}
-                  onClick={() =>
-                    writeContract({
-                      address: srcDep.TokenBridge,
-                      abi: TokenBridgeAbi,
-                      functionName: "bridge",
-                      args: [BigInt(dstId!), user!, parsed, minShares],
-                    })
-                  }
+                  onClick={submit}
                 >
                   {busy ? (
                     <>
@@ -356,8 +398,9 @@ export function Bridge() {
       <Section title="How much to trust this">
         <Card>
           <p className="text-sm text-fg-muted">
-            This is a testnet bridge run by a small signer committee: its signers could release the tUSD it holds. Keep
-            transfers small. A real deployment would move to a larger committee and light-client proofs.
+            This is a testnet demo. On Portaldot, your transfer is held and paid by one relayer wallet rather than a
+            contract, so you are trusting whoever runs it. Keep transfers small. A real deployment would use contracts on
+            both sides, a larger signer committee and light-client proofs.
           </p>
         </Card>
       </Section>
@@ -444,12 +487,80 @@ function useSaveQuote(
   };
 }
 
+/** Whether a transfer has landed. Other chains record this in TokenBridge; Portaldot has only the payout itself. */
+function useDelivery(t: Transfer, id: Hex) {
+  const dstDep = bridgeDeployments[t.dstChainId];
+  const toWallet = dstDep?.custody === "wallet";
+  const client = usePublicClient({ chainId: t.dstChainId });
+  const [payout, setPayout] = useState<{ shares: bigint }>();
+
+  const processed = useReadContract({
+    chainId: t.dstChainId,
+    address: dstDep?.TokenBridge ?? zeroAddress,
+    abi: TokenBridgeAbi,
+    functionName: "processed",
+    args: [id],
+    query: {
+      enabled: !!dstDep && !toWallet,
+      refetchInterval: (q) => (q.state.data ? false : 6_000),
+    },
+  });
+
+  useEffect(() => {
+    if (!toWallet || !client || !t.to || payout) return;
+    const tag = `${PAYOUT_MAGIC}${id.slice(2)}`.toLowerCase();
+    let cancelled = false;
+
+    const check = async () => {
+      const head = await client.getBlockNumber();
+      const floor = BigInt(dstDep.deployBlock);
+      const fromBlock = head - floor > PAYOUT_SEARCH_BLOCKS ? head - PAYOUT_SEARCH_BLOCKS : floor;
+      const hub = addressesFor(portaldot.id);
+      const [saved, paid] = await Promise.all([
+        client.getContractEvents({
+          address: hub.SwapDesk,
+          abi: SwapDeskAbi,
+          eventName: "StableDeposited",
+          args: { payer: dstDep.TokenBridge, receiver: t.to },
+          fromBlock,
+        }),
+        client.getContractEvents({
+          address: dstDep.token,
+          abi: MockStableAbi,
+          eventName: "Transfer",
+          args: { from: dstDep.TokenBridge, to: t.to },
+          fromBlock,
+        }),
+      ]);
+      for (const log of [...saved, ...paid]) {
+        const tx = await client.getTransaction({ hash: log.transactionHash });
+        if (cancelled || !tx.input.toLowerCase().endsWith(tag)) continue;
+        setPayout({ shares: "shares" in log.args ? (log.args.shares ?? 0n) : 0n });
+        return true;
+      }
+      return false;
+    };
+
+    const timer = setInterval(() => {
+      check().then((found) => found && clearInterval(timer)).catch(() => {
+        // The RPC drops requests under load, and the next pass tries again.
+      });
+    }, 8_000);
+    check().then((found) => found && clearInterval(timer)).catch(() => {});
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [toWallet, client, t.to, id, payout, dstDep]);
+
+  return toWallet
+    ? { delivered: payout !== undefined, shares: payout?.shares }
+    : { delivered: processed.data === true, shares: undefined };
+}
+
 function TransferRow({ transfer: t }: { transfer: Transfer }) {
   const srcChain = chainById(t.srcChainId);
   const dstChain = chainById(t.dstChainId);
-  const dstDep = bridgeDeployments[t.dstChainId];
-  const client = usePublicClient({ chainId: t.dstChainId });
-  const [shares, setShares] = useState<bigint>();
 
   const id = useMemo(
     () =>
@@ -461,41 +572,7 @@ function TransferRow({ transfer: t }: { transfer: Transfer }) {
       ),
     [t.srcChainId, t.nonce],
   );
-
-  const processed = useReadContract({
-    chainId: t.dstChainId,
-    address: dstDep?.TokenBridge ?? zeroAddress,
-    abi: TokenBridgeAbi,
-    functionName: "processed",
-    args: [id],
-    query: {
-      enabled: !!dstDep,
-      refetchInterval: (q) => (q.state.data ? false : 6_000),
-    },
-  });
-  const delivered = processed.data === true;
-
-  useEffect(() => {
-    if (!delivered || !client || !dstDep || !t.wantsSave) return;
-    let cancelled = false;
-    client
-      .getContractEvents({
-        address: dstDep.TokenBridge,
-        abi: TokenBridgeAbi,
-        eventName: "Released",
-        args: { id },
-        fromBlock: BigInt(dstDep.deployBlock),
-      })
-      .then((logs) => {
-        if (!cancelled && logs[0]) setShares(logs[0].args.shares);
-      })
-      .catch(() => {
-        // Public RPCs can refuse wide log ranges; the row still shows the transfer as delivered.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [delivered, client, dstDep, t.wantsSave, id]);
+  const { delivered, shares } = useDelivery(t, id);
 
   const outcome = !delivered ? (
     <span className="inline-flex items-center gap-1.5 text-fg-muted">

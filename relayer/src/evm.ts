@@ -51,7 +51,18 @@ export function txOverrides(chain: Chain): { type?: number } {
   return chain.legacy ? { type: 0 } : {};
 }
 
+let hubQueue: Promise<unknown> = Promise.resolve();
+
+/** Every job sends from one Portaldot key, so its transactions must go one at a time. */
+export function withHubLock<T>(run: () => Promise<T>): Promise<T> {
+  const result = hubQueue.then(run, run);
+  hubQueue = result.catch(() => {});
+  return result;
+}
+
 export function errorText(e: unknown): string {
-  const err = e as { shortMessage?: string; reason?: string; message?: string };
-  return err.shortMessage ?? err.reason ?? err.message ?? String(e);
+  const err = e as { shortMessage?: string; reason?: string; message?: string; error?: { message?: string } };
+  const text = err.shortMessage ?? err.reason ?? err.message ?? String(e);
+  // ethers wraps node errors it can't classify, and the useful text is the node's own.
+  return err.error?.message ? `${text}: ${err.error.message}` : text;
 }
