@@ -61,6 +61,10 @@ export type BridgeDeployment = {
   desk: Address;
   deployBlock: number;
   custody?: "wallet";
+  /** The bridged token's symbol on this chain: tUSD on Portaldot, USDC on the others. */
+  tokenSymbol?: string;
+  /** Where to get the token on a testnet. */
+  faucet?: string;
 };
 
 // `scripts/deploy-bridge.mjs` writes one bridge-<chainId>.json per chain it has deployed to.

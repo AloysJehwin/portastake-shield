@@ -15,7 +15,7 @@ export function WalletButton({ compact = false }: { compact?: boolean }) {
 
         if (!connected) {
           return (
-            <button onClick={openConnectModal} className="btn-primary w-full">
+            <button onClick={openConnectModal} className={`btn-primary ${compact ? "" : "w-full"}`}>
               <Wallet size={16} aria-hidden />
               {compact ? "Connect" : "Connect wallet"}
             </button>
@@ -24,7 +24,7 @@ export function WalletButton({ compact = false }: { compact?: boolean }) {
 
         if (chain.unsupported) {
           return (
-            <button onClick={openChainModal} className="btn btn-primary w-full bg-danger text-white hover:bg-danger/90">
+            <button onClick={openChainModal} className={`btn btn-primary ${compact ? "" : "w-full"} bg-danger text-white hover:bg-danger/90`}>
               <AlertTriangle size={16} aria-hidden /> Wrong network
             </button>
           );
