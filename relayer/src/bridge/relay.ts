@@ -9,7 +9,7 @@ import { errorText, providerFor, safeHead, TOKEN_BRIDGE_ABI, txOverrides, withHu
 import type { PendingRelease, Store } from '../state.ts';
 import { HubWallet } from './hubWallet.ts';
 import { releaseId, signRelease } from './message.ts';
-import { hubNonce, parseBridgeOut } from './tags.ts';
+import { hubNonce, routeOfTransfer } from './tags.ts';
 
 const MAX_BACKOFF_MS = 5 * 60_000;
 // A wallet side has no deploy block. With none recorded, start this far back from the head.
@@ -120,9 +120,8 @@ export class BridgeRelayer {
       for (const log of (await token.queryFilter(filter, from, to)) as ethers.EventLog[]) {
         if (log.removed) continue;
         const tx = await l.provider.getTransaction(log.transactionHash);
-        // Must be a direct transfer by the sender, or the routing isn't theirs to give.
-        const route = tx?.to && ethers.getAddress(tx.to) === ethers.getAddress(l.token) && tx.from === log.args.from
-          ? parseBridgeOut(tx.data)
+        const route = tx
+          ? routeOfTransfer({ tx, token: l.token, wallet: l.address, from: log.args.from, value: log.args.value })
           : undefined;
         if (!route) {
           this.log(`[bridge] ${l.chain.key}: ${log.transactionHash} sent the wallet ${log.args.value} with no routing, treating it as inventory`);
