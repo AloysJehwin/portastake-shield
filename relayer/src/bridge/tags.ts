@@ -17,20 +17,74 @@ export function encodeBridgeOut({ dstChainId, to, minShares }: BridgeOut): strin
   return ethers.solidityPacked(['bytes4', 'uint64', 'address'], [BRIDGE_OUT_MAGIC, dstChainId, to]);
 }
 
-/** The routing in a token `transfer` input, or undefined if this isn't a bridge-out transaction. */
-export function parseBridgeOut(input: string): BridgeOut | undefined {
-  const data = ethers.getBytes(input);
-  if (ethers.hexlify(data.slice(0, 4)) !== TRANSFER_SELECTOR) return undefined;
-  const suffix = data.slice(TRANSFER_CALLDATA_LENGTH);
+function decodeRoute(suffix: Uint8Array, exact: boolean): BridgeOut | undefined {
   const magic = ethers.hexlify(suffix.slice(0, 4));
   const saving = magic === BRIDGE_SAVE_MAGIC;
   if (!saving && magic !== BRIDGE_OUT_MAGIC) return undefined;
-  if (suffix.length !== 4 + 8 + 20 + (saving ? 32 : 0)) return undefined;
+  const length = 4 + 8 + 20 + (saving ? 32 : 0);
+  if (exact ? suffix.length !== length : suffix.length < length) return undefined;
   const to = ethers.getAddress(ethers.hexlify(suffix.slice(12, 32)));
   if (to === ethers.ZeroAddress) return undefined;
   const route: BridgeOut = { dstChainId: Number(BigInt(ethers.hexlify(suffix.slice(4, 12)))), to };
   if (saving) route.minShares = BigInt(ethers.hexlify(suffix.slice(32, 64)));
   return route;
+}
+
+/** The routing in a token `transfer` input, or undefined if this isn't a bridge-out transaction. */
+export function parseBridgeOut(input: string): BridgeOut | undefined {
+  const data = ethers.getBytes(input);
+  if (ethers.hexlify(data.slice(0, 4)) !== TRANSFER_SELECTOR) return undefined;
+  return decodeRoute(data.slice(TRANSFER_CALLDATA_LENGTH), true);
+}
+
+/**
+ * The routing of a `transfer(wallet, value)` nested in a smart wallet's call (MetaMask's DelegationManager,
+ * an ERC-4337 EntryPoint). The call can appear more than once, so copies must agree on the route.
+ */
+export function findNestedBridgeOut(input: string, wallet: string, value: bigint): BridgeOut | undefined {
+  const hex = input.slice(2).toLowerCase();
+  const call =
+    TRANSFER_SELECTOR.slice(2) + wallet.slice(2).toLowerCase().padStart(64, '0') + value.toString(16).padStart(64, '0');
+  let found: BridgeOut | undefined;
+  for (let at = hex.indexOf(call); at >= 0; at = hex.indexOf(call, at + 1)) {
+    if (at % 2 !== 0) continue;
+    const start = at + call.length;
+    // The longest tag is 64 bytes; anything after it is the outer call's own data.
+    const route = decodeRoute(ethers.getBytes(`0x${hex.slice(start, start + 128)}`), false);
+    if (!route) continue;
+    if (found && (found.dstChainId !== route.dstChainId || found.to !== route.to || found.minShares !== route.minShares)) {
+      return undefined;
+    }
+    found = route;
+  }
+  return found;
+}
+
+export type IncomingTransfer = {
+  tx: { to: string | null; from: string; data: string };
+  token: string;
+  wallet: string;
+  /** The Transfer log's sender and value. */
+  from: string;
+  value: bigint;
+};
+
+/**
+ * The route of a transfer into the bridge wallet, or undefined if it only adds inventory.
+ *  - The wallet paying itself brings in no money, so it never earns a payout.
+ *  - A direct transfer can route anywhere: its signer owns the tokens and wrote the routing.
+ *  - A nested transfer may have been written by whoever built the outer call, so it can only pay out to the
+ *    account the tokens came from.
+ */
+export function routeOfTransfer({ tx, token, wallet, from, value }: IncomingTransfer): BridgeOut | undefined {
+  const sender = ethers.getAddress(from);
+  if (sender === ethers.getAddress(wallet)) return undefined;
+  if (!tx.to) return undefined;
+  if (ethers.getAddress(tx.to) === ethers.getAddress(token)) {
+    return ethers.getAddress(tx.from) === sender ? parseBridgeOut(tx.data) : undefined;
+  }
+  const route = findNestedBridgeOut(tx.data, wallet, value);
+  return route?.to === sender ? route : undefined;
 }
 
 export function encodePayoutTag(id: string): string {

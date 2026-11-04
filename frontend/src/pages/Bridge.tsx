@@ -6,6 +6,7 @@ import {
   encodeAbiParameters,
   encodeFunctionData,
   encodePacked,
+  isAddressEqual,
   keccak256,
   parseUnits,
   zeroAddress,
@@ -159,7 +160,10 @@ export function Bridge() {
   const overCap = cap !== undefined && parsed > cap;
   // Tokens locked here can't come back on their own, so never lock more than the far side can pay.
   const overLiquidity = liquidity !== undefined && parsed > liquidity;
-  const blocker = overBalance
+  const isBridgeWallet = fromWallet && !!user && !!srcDep && isAddressEqual(user, srcDep.TokenBridge);
+  const blocker = isBridgeWallet
+    ? "This wallet runs the bridge, so it can't send through it. Connect a different wallet."
+    : overBalance
     ? "That is more than you hold on this chain."
     : overCap
       ? `The limit is ${formatUsd(cap)} per transfer.`
@@ -186,7 +190,14 @@ export function Bridge() {
         let transfer: Pick<Transfer, "nonce" | "amount" | "wantsSave">;
         if (fromWallet) {
           const event = decodeEventLog({ abi: MockStableAbi, data: log.data, topics: log.topics });
-          if (event.eventName !== "Transfer") continue;
+          // A smart wallet's transaction can move other tokens too, such as a gas fee.
+          if (
+            event.eventName !== "Transfer" ||
+            !isAddressEqual(log.address, token) ||
+            !isAddressEqual(event.args.to, srcDep.TokenBridge)
+          ) {
+            continue;
+          }
           // No contract counts these on Portaldot, so a transfer's position in the chain identifies it.
           const nonce = (receipt.blockNumber << 16n) | BigInt(log.logIndex);
           transfer = { nonce: nonce.toString(), amount: event.args.value.toString(), wantsSave: savingIn };

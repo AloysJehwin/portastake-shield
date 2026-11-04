@@ -31,18 +31,22 @@ if (bridge) {
 if (stakingJobs && enabled('price')) jobs.push({ name: 'price', everyMs: 5 * 60_000, run: () => stakingJobs.price() });
 if (stakingJobs && enabled('staking')) jobs.push({ name: 'staking', everyMs: 10 * 60_000, run: () => stakingJobs.staking() });
 
-async function runJob(job: (typeof jobs)[number]): Promise<void> {
+async function runJob(job: (typeof jobs)[number]): Promise<boolean> {
   try {
     await job.run();
+    return true;
   } catch (e) {
     console.error(`[${job.name}] failed: ${errorText(e)}`);
+    return false;
   }
 }
 
 if (once) {
-  for (const job of jobs) await runJob(job);
+  let ok = true;
+  for (const job of jobs) ok = (await runJob(job)) && ok;
   await stakingJobs?.disconnect();
-  process.exit(0);
+  // A scheduler running `--once` needs the failure to show up.
+  process.exit(ok ? 0 : 1);
 }
 
 for (const job of jobs) {
