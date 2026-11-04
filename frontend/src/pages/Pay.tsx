@@ -32,7 +32,7 @@ export function Pay() {
   const [cfg, setCfg] = useState<Inspect | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
-    fetch(`${API}/api/gateway/inspect?id=${encodeURIComponent(id)}`)
+    fetch(`${API}/api/gateway/inspect?gid=${encodeURIComponent(id)}`)
       .then(async (r) => {
         const j = await r.json();
         if (!r.ok) throw new Error(j.error ?? `answered ${r.status}`);
@@ -73,6 +73,7 @@ export function Pay() {
   const tool = toTool(saved);
   // Carry the query the link was opened with (for example ?city=Lima) into the call.
   const query = new URLSearchParams(search);
+  query.delete("id"); // older links carried the id twice
   if (cfg.method === "GET" && [...query].length) {
     tool.params = tool.params?.map((q) => (q.name === "query" ? { ...q, value: query.toString() } : q));
   }
