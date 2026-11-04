@@ -17,7 +17,7 @@ On the surface: deposit stablecoins, earn 8% a year (in POT), automate savings a
 | Deploy script | ✅ `scripts/deploy-cast.mjs` deploys stages 1–4 to V3 and is re-runnable (reuses anything already live). The staged `.s.sol` scripts are kept for local chains |
 | Testnet deployment | ✅ All four stages live on Portaldot V3 (addresses in `contracts/deployments/420420777.json`); stage 4 (PolicyNFT + MandateManager) cost ~540 tPOT ([details](docs/ARCHITECTURE.md#deploy-cost--staged)) |
 | Relayer (`relayer/`) | 🚧 Mandate keeper and x402 facilitator done. Price feed, sweep, bond + nominate, reward reporting and the bridge relay are built; the bridge passes an end-to-end run on three local chains, while staking has only been dry-run against the live chain. ⏳ Not started on testnet (needs a funded stash and keys) |
-| Cross-chain bridge (`TokenBridge`) | ✅ Built and tested locally, configured for Base, Arbitrum, OP, Ethereum Sepolia and Polygon Amoy. ⏳ Not deployed: the Portaldot side needs ~280 tPOT ([steps](docs/ARCHITECTURE.md#cross-chain-bridge)) |
+| Cross-chain bridge | ✅ Built and tested locally, configured for Base, Arbitrum, OP, Ethereum Sepolia and Polygon Amoy. Portaldot has no bridge contract: the relayer wallet holds its side, to keep the remaining tPOT for testing ([details](docs/ARCHITECTURE.md#cross-chain-bridge)). ⏳ Not deployed |
 | SDK (`sdk/`) | ✅ `@portastake/sdk`: x402 paywall, payer and facilitator, plus vault, desk, mandate and keeper clients, explorer links and a `portastake` CLI ([README](sdk/README.md)) |
 | Frontend (`frontend/`) | ✅ Vite + React + wagmi + RainbowKit; seven pages (Home / Deposit / Bridge / Withdraw / Automate / On-chain tools / Activity), with paid tools served by Vercel functions; light theme with a glass nav; live-wired to the contracts, stage-aware |
 
@@ -282,7 +282,7 @@ Maria never touched Substrate. She never heard "slashing." She never typed "bond
 | **XusdGateway** | Swaps xUSD ⇄ tUSD 1:1 from its own stock and calls SwapDesk, so xUSD can be deposited into savings and savings withdrawn as xUSD | x402 money earns yield; a payments wallet tops up from savings | ✅ |
 | **PolicyNFT** | Soulbound ERC-721 + ERC-5192, minted by the vault on first deposit, terms recorded in `TermsSnapshot` | Her coverage certificate | ✅ |
 | **MandateManager** | Save / pay mandates (recurring, scheduled, threshold) with caps, expiry, cooldown and slippage floors; permissionless `execute` | Savings run themselves; bills pay themselves | ✅ |
-| **TokenBridge** | Lock-and-release tUSD bridge with N-of-M signers, on every supported chain | She can bring money from another chain and start saving in one step | ✅ local, ⏳ testnet |
+| **TokenBridge** | Lock-and-release tUSD bridge on each spoke chain, with the relayer wallet as its Portaldot side | She can bring money from another chain and start saving in one step | ✅ local, ⏳ testnet |
 | **`@portastake/sdk`** | npm package: x402 paid tools (paywall middleware, paying `fetch`, facilitator) and on-chain tooling (vault, desk, mandates, keeper, explorer links, Portaldot deploy-cost and gas helpers), with a CLI | Other Portaldot apps can charge per run in xUSD and build on stPOT | ✅ |
 | **Relayer** | TypeScript daemon, SS58 key + EVM key | Bonds POT, reports rewards, feeds price, keeps mandates running, carries bridge transfers | 🚧 |
 | **Attester daemon** | Opt-in TS daemon, signs slashing events | Decentralizes the oracle | 🚧 |
