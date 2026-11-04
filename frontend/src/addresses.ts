@@ -54,7 +54,14 @@ export function addressesFor(chainId: number): Deployment {
   return deployments[chainId] ?? empty;
 }
 
-export type BridgeDeployment = { TokenBridge: Address; token: Address; desk: Address; deployBlock: number };
+export type BridgeDeployment = {
+  /** This chain's TokenBridge. With `custody: "wallet"`, the relayer wallet that stands in for one. */
+  TokenBridge: Address;
+  token: Address;
+  desk: Address;
+  deployBlock: number;
+  custody?: "wallet";
+};
 
 // `scripts/deploy-bridge.mjs` writes one bridge-<chainId>.json per chain it has deployed to.
 const bridgeFiles = import.meta.glob<BridgeDeployment>("./deployments/bridge-*.json", {

@@ -1,18 +1,29 @@
-// Watches `Locked` on every chain, then signs and delivers `release` on the destination.
+// Watches every chain for transfers, then signs and delivers them on the destination.
+//
+// Other chains run TokenBridge. Portaldot has no bridge contract: the relayer's wallet holds its side, so
+// users bridge out by sending it tUSD with routing attached, and HubWallet pays transfers coming in.
 import { ethers } from 'ethers';
 import { list, loadBridgeDeployment, loadChains, type Chain } from '../config.ts';
-import { errorText, providerFor, safeHead, TOKEN_BRIDGE_ABI, txOverrides } from '../evm.ts';
+import { errorText, providerFor, safeHead, TOKEN_BRIDGE_ABI, txOverrides, withHubLock } from '../evm.ts';
 import type { PendingRelease, Store } from '../state.ts';
+import { HubWallet } from './hubWallet.ts';
 import { releaseId, signRelease } from './message.ts';
+import { hubNonce, parseBridgeOut } from './tags.ts';
 
 const MAX_BACKOFF_MS = 5 * 60_000;
+const TRANSFER_ABI = ['event Transfer(address indexed from, address indexed to, uint256 value)'];
 
-// A too-low gas limit makes the desk call fail inside TokenBridge's try/catch while the transaction
-// still succeeds, paying tUSD instead of stPOT. Node estimators can land on exactly that limit, so
-// save releases get a floor well above what the deposit path uses.
-const SAVE_GAS_FLOOR = 1_500_000n;
-
-type Live = { chain: Chain; provider: ethers.JsonRpcProvider; bridge: ethers.Contract; address: string; deployBlock: number };
+type Live = {
+  chain: Chain;
+  provider: ethers.JsonRpcProvider;
+  /** Absent on Portaldot, where `hubWallet` stands in for it. */
+  bridge?: ethers.Contract;
+  hubWallet?: HubWallet;
+  token: string;
+  /** The address signers bind this chain's side to: its TokenBridge, or Portaldot's wallet. */
+  address: string;
+  deployBlock: number;
+};
 
 export class BridgeRelayer {
   private readonly live = new Map<number, Live>();
@@ -26,13 +37,16 @@ export class BridgeRelayer {
       const dep = loadBridgeDeployment(chain.chainId);
       if (!dep) continue;
       const provider = providerFor(chain);
-      this.live.set(chain.chainId, {
-        chain,
-        provider,
-        address: dep.TokenBridge,
-        deployBlock: dep.deployBlock,
-        bridge: new ethers.Contract(dep.TokenBridge, TOKEN_BRIDGE_ABI, provider),
-      });
+      const common = { chain, provider, address: dep.TokenBridge, token: dep.token, deployBlock: dep.deployBlock };
+      this.live.set(
+        chain.chainId,
+        dep.custody === 'wallet'
+          ? {
+              ...common,
+              hubWallet: new HubWallet(chain, provider, dep.TokenBridge, dep.token, dep.desk, dep.deployBlock, store, this.submitKey, log),
+            }
+          : { ...common, bridge: new ethers.Contract(dep.TokenBridge, TOKEN_BRIDGE_ABI, provider) },
+      );
     }
   }
 
@@ -44,7 +58,9 @@ export class BridgeRelayer {
     // One bad RPC must not stop the other chains.
     await Promise.all(
       [...this.live.values()].map((l) =>
-        this.scan(l).catch((e) => this.log(`[bridge] ${l.chain.key}: scan failed: ${errorText(e)}`)),
+        (l.hubWallet ? this.scanWalletIn(l) : this.scanLocked(l)).catch((e) =>
+          this.log(`[bridge] ${l.chain.key}: scan failed: ${errorText(e)}`),
+        ),
       ),
     );
     this.store.save();
@@ -55,32 +71,69 @@ export class BridgeRelayer {
     );
   }
 
-  private async scan(l: Live): Promise<void> {
+  private addPending(key: string, p: Pick<PendingRelease, 'srcChainId' | 'dstChainId' | 'nonce' | 'to' | 'amount' | 'minShares'>): void {
+    if (!this.live.has(p.dstChainId)) {
+      this.log(`[bridge] ${key}: destination ${p.dstChainId} has no deployment, skipping`);
+      return;
+    }
+    this.store.state.pending[key] ??= { ...p, attempts: 0, nextTry: 0 };
+    this.log(`[bridge] ${key}: locked ${p.amount} for ${p.to} -> ${p.dstChainId}`);
+  }
+
+  private async scanLocked(l: Live): Promise<void> {
     const { state } = this.store;
+    const bridge = l.bridge!;
     const head = await safeHead(l.provider, l.chain);
     let from = state.cursors[l.chain.chainId] ?? l.deployBlock;
     while (from <= head) {
       const to = Math.min(from + l.chain.logChunk - 1, head);
-      const logs = await l.bridge.queryFilter(l.bridge.filters.Locked(), from, to);
+      const logs = await bridge.queryFilter(bridge.filters.Locked(), from, to);
       for (const log of logs as ethers.EventLog[]) {
         if (log.removed) continue;
         const { nonce, dstChainId, to: receiver, amount, minShares } = log.args;
-        const key = `${l.chain.chainId}:${nonce}`;
-        if (!this.live.has(Number(dstChainId))) {
-          this.log(`[bridge] ${key}: destination ${dstChainId} has no deployment, skipping`);
-          continue;
-        }
-        state.pending[key] ??= {
+        this.addPending(`${l.chain.chainId}:${nonce}`, {
           srcChainId: l.chain.chainId,
           dstChainId: Number(dstChainId),
           nonce: nonce.toString(),
           to: receiver,
           amount: amount.toString(),
           minShares: minShares.toString(),
-          attempts: 0,
-          nextTry: 0,
-        };
-        this.log(`[bridge] ${key}: locked ${amount} for ${receiver} -> ${dstChainId}`);
+        });
+      }
+      from = to + 1;
+      state.cursors[l.chain.chainId] = from;
+    }
+  }
+
+  /** Bridge-outs from Portaldot: a tUSD transfer to the wallet, with routing after its calldata. */
+  private async scanWalletIn(l: Live): Promise<void> {
+    const { state } = this.store;
+    const token = new ethers.Contract(l.token, TRANSFER_ABI, l.provider);
+    const filter = token.filters.Transfer(null, l.address);
+    const head = await safeHead(l.provider, l.chain);
+    let from = state.cursors[l.chain.chainId] ?? l.deployBlock;
+    while (from <= head) {
+      const to = Math.min(from + l.chain.logChunk - 1, head);
+      for (const log of (await token.queryFilter(filter, from, to)) as ethers.EventLog[]) {
+        if (log.removed) continue;
+        const tx = await l.provider.getTransaction(log.transactionHash);
+        // Must be a direct transfer by the sender, or the routing isn't theirs to give.
+        const route = tx?.to && ethers.getAddress(tx.to) === ethers.getAddress(l.token) && tx.from === log.args.from
+          ? parseBridgeOut(tx.data)
+          : undefined;
+        if (!route) {
+          this.log(`[bridge] ${l.chain.key}: ${log.transactionHash} sent the wallet ${log.args.value} tUSD with no routing, treating it as inventory`);
+          continue;
+        }
+        const nonce = hubNonce(log.blockNumber, log.index);
+        this.addPending(`${l.chain.chainId}:${nonce}`, {
+          srcChainId: l.chain.chainId,
+          dstChainId: route.dstChainId,
+          nonce: nonce.toString(),
+          to: route.to,
+          amount: log.args.value.toString(),
+          minShares: '0',
+        });
       }
       from = to + 1;
       state.cursors[l.chain.chainId] = from;
@@ -90,12 +143,14 @@ export class BridgeRelayer {
   /** Sequential per destination so one wallet's nonces stay in order. */
   private async deliverTo(dst: Live): Promise<void> {
     const { state } = this.store;
+    if (dst.hubWallet) await dst.hubWallet.scanPaid();
     const due = Object.entries(state.pending)
       .filter(([, p]) => p.dstChainId === dst.chain.chainId && p.nextTry <= Date.now())
       .sort(([, a], [, b]) => Number(BigInt(a.nonce) - BigInt(b.nonce)));
     for (const [key, p] of due) {
       try {
-        await this.deliver(key, p, dst);
+        if (dst.hubWallet) await this.deliverToHub(key, p, dst.hubWallet);
+        else await this.deliver(key, p, dst);
       } catch (e) {
         p.attempts += 1;
         p.lastError = errorText(e);
@@ -106,16 +161,25 @@ export class BridgeRelayer {
     }
   }
 
+  private async deliverToHub(key: string, p: PendingRelease, hubWallet: HubWallet): Promise<void> {
+    if (this.dryRun) {
+      this.log(`[bridge] ${key}: dry run, would pay ${p.amount} to ${p.to} on Portaldot`);
+      return;
+    }
+    await withHubLock(() => hubWallet.deliver(key, p));
+  }
+
   private async deliver(key: string, p: PendingRelease, dst: Live): Promise<void> {
     const src = this.live.get(p.srcChainId);
     if (!src) throw new Error(`source ${p.srcChainId} has no deployment`);
+    const dstBridge = dst.bridge!;
 
     const nonce = BigInt(p.nonce);
     const amount = BigInt(p.amount);
     const minShares = BigInt(p.minShares);
     const id = releaseId(p.srcChainId, nonce);
 
-    if (await dst.bridge.processed(id)) {
+    if (await dstBridge.processed(id)) {
       this.log(`[bridge] ${key}: already released`);
       delete this.store.state.pending[key];
       return;
@@ -141,31 +205,14 @@ export class BridgeRelayer {
     );
 
     const wallet = new ethers.Wallet(this.submitKey, dst.provider);
-    const bridge = dst.bridge.connect(wallet) as ethers.Contract;
+    const bridge = dstBridge.connect(wallet) as ethers.Contract;
     const args = [p.srcChainId, nonce, p.to, amount, minShares, sigs] as const;
 
     const estimate = await bridge.release.estimateGas(...args);
-    const padded = (estimate * 150n) / 100n;
-    const gasLimit = minShares > 0n && padded < SAVE_GAS_FLOOR ? SAVE_GAS_FLOOR : padded;
+    const tx = await bridge.release(...args, { gasLimit: (estimate * 150n) / 100n, ...txOverrides(dst.chain) });
+    await tx.wait(1, 180_000);
 
-    const tx = await bridge.release(...args, { gasLimit, ...txOverrides(dst.chain) });
-    const receipt = await tx.wait(1, 180_000);
-    const released = receipt.logs
-      .map((log: ethers.Log) => {
-        try {
-          return bridge.interface.parseLog(log);
-        } catch {
-          return null;
-        }
-      })
-      .find((parsed: ethers.LogDescription | null) => parsed?.name === 'Released');
-
-    const shares: bigint = released?.args.shares ?? 0n;
     delete this.store.state.pending[key];
-    if (minShares > 0n && dst.chain.hub && shares === 0n) {
-      this.log(`[bridge] ${key}: delivered as tUSD, the desk could not take the save (${tx.hash})`);
-    } else {
-      this.log(`[bridge] ${key}: released on ${dst.chain.key}, shares ${shares} (${tx.hash})`);
-    }
+    this.log(`[bridge] ${key}: released on ${dst.chain.key} (${tx.hash})`);
   }
 }
