@@ -143,6 +143,19 @@ Nothing here sends a Portaldot transaction until a user bridges. Each spoke need
 
 Real costs on Portaldot, as estimated by the node and possibly overstated: ~11.7 tPOT for a save to a wallet new to stPOT, ~3.9 for paying tUSD to a new wallet, ~0.02 for a price update. Test with one wallet. The desk's POT inventory caps a save (about 15 POT today), and anything larger arrives as tUSD.
 
+## SDK (`sdk/`)
+
+`@portastake/sdk` is the reusable layer: the app's on-chain tools (`frontend/api/`) and the relayer's facilitator, sample tool, x402 client and keeper are thin wrappers over it, and other Portaldot apps install it from npm.
+
+| Entry point | Contents |
+|---|---|
+| `@portastake/sdk/x402` | `createPayingFetch` (EIP-3009 xUSD payments, spend-capped, xUSD only), `getOffer`, `getSettlement` |
+| `@portastake/sdk/x402/server` | `xusdPaywall` (Express, wraps `@x402/express`), `x402Cors` |
+| `@portastake/sdk/x402/facilitator` | `createFacilitator`: `/supported`, `/verify`, `/settle`, with legacy transactions for revive |
+| `@portastake/sdk/chain` | `createPortaStake` (vault, desk, stable deposits and withdrawals via SwapDesk or XusdGateway), `mandates`, `runKeeperPass`, explorer links, `estimateDeployCost`, `upfrontCost` |
+
+The ABIs and addresses in `sdk/src` are written by `frontend/scripts/sync-abis.ts`, the same step that updates the frontend.
+
 ## Decimals handling
 
 - Substrate side: tPOT has 14 decimals.
