@@ -6,8 +6,10 @@ Paid on-chain tools and PortaStake tooling for [Portaldot](https://portaldot.io)
 - **`@portastake/sdk/chain`**: the PortaStake Shield vault, desk and mandates, a keeper, Portaldot explorer links, and helpers for Portaldot's EVM (pallet-revive).
 - **`portastake`**: a CLI over both.
 
+It isn't on the npm registry yet. From a clone of this repo, install the packed build (use the path to your clone):
+
 ```sh
-npm i @portastake/sdk viem
+npm i ./frontend/vendor/portastake-sdk-0.1.0.tgz viem
 npm i express        # only for the paywall and the facilitator
 ```
 
@@ -104,9 +106,9 @@ Writes handle Portaldot's EVM details: they send legacy transactions with node-e
 ## CLI
 
 ```sh
-npx @portastake/sdk stats                        # or install globally: npm i -g @portastake/sdk
-portastake price
-portastake position 0x2f1B…510E
+npx portastake stats
+npx portastake price
+npx portastake position 0x2f1B…510E
 portastake explorer 0x2f1B…510E                  # explorer link + SS58
 portastake deploy-cost out/MyContract.sol/MyContract.json
 portastake offer https://api.example/report      # what an x402 tool charges
