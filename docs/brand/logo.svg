@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" role="img" aria-label="PortaStake Shield">
+  <rect width="512" height="512" rx="112" fill="#2563EB"/>
+  <path d="M256 84 L392 142 V252 C392 336 336 402 256 428 C176 402 120 336 120 252 V142 Z" fill="#FFFFFF"/>
+  <path d="M184 262 L256 196 L328 262" stroke="#0A0A0A" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M184 334 L256 268 L328 334" stroke="#2563EB" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
