@@ -1,0 +1,3 @@
+# pnpm 11 keeps per-project settings here. esbuild (used by tsup and vitest) ships a build script.
+allowBuilds:
+  esbuild: true

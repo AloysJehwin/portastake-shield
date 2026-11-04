@@ -1,0 +1,64 @@
+{
+  "name": "@portastake/sdk",
+  "version": "0.1.0",
+  "description": "Paid on-chain tools (x402) and PortaStake tooling for Portaldot: xUSD paywalls, a facilitator, PortaStake vault and mandate clients, a keeper, and explorer links.",
+  "license": "MIT",
+  "type": "module",
+  "author": "Aloys Jehwin",
+  "repository": { "type": "git", "url": "git+https://github.com/AloysJehwin/portastake-shield.git", "directory": "sdk" },
+  "homepage": "https://github.com/AloysJehwin/portastake-shield/tree/main/sdk#readme",
+  "keywords": ["portaldot", "x402", "pay-per-use", "on-chain-tools", "eip-3009", "staking", "liquid-staking", "viem", "sdk"],
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "import": "./dist/index.js", "require": "./dist/index.cjs" },
+    "./chain": { "import": "./dist/chain/index.js", "require": "./dist/chain/index.cjs" },
+    "./x402": { "import": "./dist/x402/index.js", "require": "./dist/x402/index.cjs" },
+    "./x402/server": { "import": "./dist/x402/server.js", "require": "./dist/x402/server.cjs" },
+    "./x402/facilitator": { "import": "./dist/x402/facilitator.js", "require": "./dist/x402/facilitator.cjs" },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "chain": ["./dist/chain/index.d.ts"],
+      "x402": ["./dist/x402/index.d.ts"],
+      "x402/server": ["./dist/x402/server.d.ts"],
+      "x402/facilitator": ["./dist/x402/facilitator.d.ts"]
+    }
+  },
+  "bin": { "portastake": "./dist/cli.js" },
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.0.0",
+    "@scure/base": "^2.0.0",
+    "@x402/core": "2.29.0",
+    "@x402/evm": "2.29.0",
+    "@x402/express": "2.29.0",
+    "@x402/fetch": "2.29.0"
+  },
+  "peerDependencies": {
+    "express": "^4.18.0 || ^5.0.0",
+    "viem": "^2.21.0"
+  },
+  "peerDependenciesMeta": {
+    "express": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.5",
+    "express": "^5.1.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2",
+    "viem": "^2.37.0",
+    "vitest": "^3.2.4"
+  }
+}
