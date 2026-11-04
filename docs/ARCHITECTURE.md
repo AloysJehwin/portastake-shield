@@ -138,6 +138,19 @@ The deployer holds ~48 tPOT. `TokenBridge` costs ~258 tPOT on Portaldot (3,526 B
 
 Spokes need testnet gas for the deployer and the relayer key. The desk's POT inventory caps how much a save can take (about 15 POT today), and anything larger arrives as tUSD.
 
+## SDK (`sdk/`)
+
+`@portastake/sdk` is the reusable layer: the app's on-chain tools (`frontend/api/`) and the relayer's facilitator, sample tool, x402 client and keeper are thin wrappers over it, and other Portaldot apps install it from npm.
+
+| Entry point | Contents |
+|---|---|
+| `@portastake/sdk/x402` | `createPayingFetch` (EIP-3009 xUSD payments, spend-capped, xUSD only), `getOffer`, `getSettlement` |
+| `@portastake/sdk/x402/server` | `xusdPaywall` (Express, wraps `@x402/express`), `x402Cors` |
+| `@portastake/sdk/x402/facilitator` | `createFacilitator`: `/supported`, `/verify`, `/settle`, with legacy transactions for revive |
+| `@portastake/sdk/chain` | `createPortaStake` (vault, desk, stable deposits and withdrawals via SwapDesk or XusdGateway), `mandates`, `runKeeperPass`, explorer links, `estimateDeployCost`, `upfrontCost` |
+
+The ABIs and addresses in `sdk/src` are written by `frontend/scripts/sync-abis.ts`, the same step that updates the frontend.
+
 ## Decimals handling
 
 - Substrate side: tPOT has 14 decimals.

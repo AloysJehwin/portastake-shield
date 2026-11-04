@@ -1,7 +1,7 @@
 import { type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useAccount, useChainId, useSwitchChain } from "wagmi";
-import { Home, ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, Repeat, History, Shield, Zap } from "lucide-react";
+import { Home, ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, Repeat, History, Shield, Wrench } from "lucide-react";
 import { portaldot, spokeChains } from "../chains";
 import { WalletButton } from "./WalletButton";
 
@@ -11,7 +11,7 @@ const NAV = [
   { to: "/bridge", label: "Bridge", icon: ArrowLeftRight },
   { to: "/withdraw", label: "Withdraw", icon: ArrowUpFromLine },
   { to: "/automate", label: "Automate", icon: Repeat },
-  { to: "/pay-per-use", label: "Pay per use", short: "Pay", icon: Zap },
+  { to: "/tools", label: "On-chain tools", short: "Tools", icon: Wrench },
   { to: "/activity", label: "Activity", icon: History },
 ] as const;
 

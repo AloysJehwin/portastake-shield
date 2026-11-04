@@ -8,18 +8,21 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "sync-abis": "tsx scripts/sync-abis.ts"
+    "sync-abis": "tsx scripts/sync-abis.ts",
+    "tools": "tsx scripts/tools-dev.ts"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.1.1",
     "@fontsource/jetbrains-mono": "^5.1.2",
     "@noble/hashes": "^2.4.0",
+    "@portastake/sdk": "file:vendor/portastake-sdk-0.1.0.tgz",
     "@rainbow-me/rainbowkit": "^2.2.4",
     "@scure/base": "^2.4.0",
     "@tanstack/react-query": "^5.62.11",
     "@x402/core": "2.29.0",
     "@x402/evm": "2.29.0",
     "@x402/fetch": "2.29.0",
+    "express": "^5.3.0",
     "lucide-react": "^0.469.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -28,6 +31,7 @@
     "wagmi": "^2.14.6"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^22.10.5",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
