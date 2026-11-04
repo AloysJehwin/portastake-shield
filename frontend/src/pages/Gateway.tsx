@@ -10,7 +10,7 @@ import { ToolCard, type Tool } from "./Tools";
 const API = ((import.meta.env.VITE_TOOLS_URL as string | undefined) ?? "").replace(/\/$/, "");
 const STORE_KEY = "portastake.gateway.endpoints";
 
-type Saved = { id: string; name: string; url: string; method: "GET" | "POST"; price: string; payTo: Address; sealed: boolean };
+export type Saved = { id: string; name: string; url: string; method: "GET" | "POST"; price: string; payTo: Address; sealed: boolean };
 type Preview = { status: number; contentType: string; sample: unknown; truncated: boolean } | { error: string };
 
 /** Public APIs that need no key, to start from. */
@@ -297,7 +297,7 @@ export function GatewaySection(props: Props) {
   );
 }
 
-function toTool(s: Saved): Tool {
+export function toTool(s: Saved): Tool {
   return {
     id: s.id,
     name: s.name,
