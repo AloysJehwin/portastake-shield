@@ -19,7 +19,7 @@ On the surface: deposit stablecoins, earn 8% a year (in POT), automate savings a
 | Relayer (`relayer/`) | 🚧 Mandate keeper and x402 facilitator done. Price feed, sweep, bond + nominate, reward reporting and the bridge relay are built; the bridge passes an end-to-end run on three local chains, while staking has only been dry-run against the live chain. ⏳ Not started on testnet (needs a funded stash and keys) |
 | Cross-chain bridge (`TokenBridge`) | ✅ Built and tested locally, configured for Base, Arbitrum, OP, Ethereum Sepolia and Polygon Amoy. ⏳ Not deployed: the Portaldot side needs ~280 tPOT ([steps](docs/ARCHITECTURE.md#cross-chain-bridge)) |
 | SDK (`sdk/`) | ✅ `@portastake/sdk`: x402 paywall, payer and facilitator, plus vault, desk, mandate and keeper clients, explorer links and a `portastake` CLI ([README](sdk/README.md)) |
-| Frontend (`frontend/`) | ✅ Vite + React + wagmi + RainbowKit; five pages (Home / Deposit / Withdraw / Automate / Activity); light theme with a glass nav; live-wired to the contracts, stage-aware |
+| Frontend (`frontend/`) | ✅ Vite + React + wagmi + RainbowKit; seven pages (Home / Deposit / Bridge / Withdraw / Automate / On-chain tools / Activity), with paid tools served by Vercel functions; light theme with a glass nav; live-wired to the contracts, stage-aware |
 
 ## SDK
 
@@ -28,7 +28,7 @@ On the surface: deposit stablecoins, earn 8% a year (in POT), automate savings a
 ```sh
 npm i @portastake/sdk viem
 npx portastake stats                      # live vault numbers
-npx portastake offer <x402 url>           # what a paid API charges
+npx portastake offer <x402 url>           # what a paid tool charges
 ```
 
 - `@portastake/sdk/x402`: `createPayingFetch` pays x402 APIs in xUSD within a spend limit. Payers sign; they pay no gas.
@@ -36,7 +36,7 @@ npx portastake offer <x402 url>           # what a paid API charges
 - `@portastake/sdk/x402/facilitator`: `createFacilitator` verifies and settles payments on Portaldot.
 - `@portastake/sdk/chain`: `createPortaStake` covers stats, positions, deposits and withdrawals in tPOT, tUSD or xUSD. Also `mandates`, `runKeeperPass`, explorer links, and `estimateDeployCost` and gas helpers for Portaldot's EVM.
 
-The relayer's facilitator, paid API and keeper are built on it.
+The app's on-chain tools and the relayer's facilitator, sample tool and keeper are built on it.
 
 ## Quickstart
 
@@ -278,12 +278,12 @@ Maria never touched Substrate. She never heard "slashing." She never typed "bond
 | **InsuranceFund** | Pot funded by the yield split, pays slashing losses | A misbehaving validator never dents her balance | ✅ |
 | **OracleCommittee** | N-of-M ECDSA attesters | Proves Substrate slashing events to the EVM | ✅ (bonding later) |
 | **WPOT**, **tUSD** | Wrapped tPOT, test stablecoin | Plumbing for the above | ✅ |
-| **xUSD + x402** | EIP-3009 test stablecoin, facilitator and sample paid API (`relayer/x402/`) | Pay-per-request APIs settle on Portaldot | ✅ |
+| **xUSD + x402** | EIP-3009 test stablecoin, facilitator and sample tool (`relayer/x402/`) | Paid tools settle per run on Portaldot | ✅ |
 | **XusdGateway** | Swaps xUSD ⇄ tUSD 1:1 from its own stock and calls SwapDesk, so xUSD can be deposited into savings and savings withdrawn as xUSD | x402 money earns yield; a payments wallet tops up from savings | ✅ |
 | **PolicyNFT** | Soulbound ERC-721 + ERC-5192, minted by the vault on first deposit, terms recorded in `TermsSnapshot` | Her coverage certificate | ✅ |
 | **MandateManager** | Save / pay mandates (recurring, scheduled, threshold) with caps, expiry, cooldown and slippage floors; permissionless `execute` | Savings run themselves; bills pay themselves | ✅ |
 | **TokenBridge** | Lock-and-release tUSD bridge with N-of-M signers, on every supported chain | She can bring money from another chain and start saving in one step | ✅ local, ⏳ testnet |
-| **`@portastake/sdk`** | npm package: x402 pay-per-use (paywall middleware, paying `fetch`, facilitator) and on-chain tooling (vault, desk, mandates, keeper, explorer links, Portaldot deploy-cost and gas helpers), with a CLI | Other Portaldot apps can charge per request in xUSD and build on stPOT | ✅ |
+| **`@portastake/sdk`** | npm package: x402 paid tools (paywall middleware, paying `fetch`, facilitator) and on-chain tooling (vault, desk, mandates, keeper, explorer links, Portaldot deploy-cost and gas helpers), with a CLI | Other Portaldot apps can charge per run in xUSD and build on stPOT | ✅ |
 | **Relayer** | TypeScript daemon, SS58 key + EVM key | Bonds POT, reports rewards, feeds price, keeps mandates running, carries bridge transfers | 🚧 |
 | **Attester daemon** | Opt-in TS daemon, signs slashing events | Decentralizes the oracle | 🚧 |
 | **Governance (veSTPOT)** | Time-locked stPOT, 24h parameter timelock | Community picks validators, sets insurance % | Later |
@@ -335,7 +335,7 @@ relayer/              TypeScript: EVM ↔ Substrate jobs and the cross-chain bri
   scripts/probe.mjs   read-only probe of the live V3 testnet
   scripts/e2e-local.mjs  bridge end-to-end test on three local chains
 scripts/              staged deploys, including deploy-bridge.mjs
-sdk/                  @portastake/sdk: x402 pay-per-use + on-chain tooling, and the portastake CLI
+sdk/                  @portastake/sdk: x402 paid tools + on-chain tooling, and the portastake CLI
 frontend/             React + wagmi/viem: Maria's savings app
 docs/                 architecture, chain facts, 8% engine, debit engine
 ```
