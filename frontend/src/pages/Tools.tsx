@@ -265,7 +265,7 @@ export function ToolCard({ tool, balance, onPaid, walletClient, address, xusd, e
       );
       if (!r.ok) {
         const detail = await r.json().then((j: { error?: string }) => j.error).catch(() => undefined);
-        throw new Error(`the tool answered ${r.status}${detail ? `: ${detail}` : ""}`);
+        throw new Error(detail ?? `The tool answered ${r.status}. You were not charged.`);
       }
       const text = await r.text();
       try {
