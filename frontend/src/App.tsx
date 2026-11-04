@@ -5,7 +5,7 @@ import { Deposit } from "./pages/Deposit";
 import { Withdraw } from "./pages/Withdraw";
 import { Automate } from "./pages/Automate";
 import { Activity } from "./pages/Activity";
-import { PayPerUse } from "./pages/PayPerUse";
+import { Tools } from "./pages/Tools";
 import { Bridge } from "./pages/Bridge";
 
 export default function App() {
@@ -18,7 +18,8 @@ export default function App() {
         <Route path="/withdraw" element={<Withdraw />} />
         <Route path="/automate" element={<Automate />} />
         <Route path="/activity" element={<Activity />} />
-        <Route path="/pay-per-use" element={<PayPerUse />} />
+        <Route path="/tools" element={<Tools />} />
+        <Route path="/pay-per-use" element={<Navigate to="/tools" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppShell>

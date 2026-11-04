@@ -1,44 +1,35 @@
-// x402 client: calls the paid API, signs the xUSD payment when it answers 402, and retries.
+// x402 client, built on @portastake/sdk: calls the paid tool, signs the xUSD payment when it answers
+// 402, and retries.
 //
 //   cd relayer && PAYER_KEY=0x... node x402/client.mjs [url]
 //
 // The payer only signs an EIP-3009 authorization: it needs xUSD but no tPOT for gas.
-import { createPublicClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { wrapFetchWithPayment, x402Client, decodePaymentResponseHeader } from '@x402/fetch';
-import { ExactEvmScheme } from '@x402/evm/exact/client';
-import { portaldot, RPC, NETWORK, XUSD, xusdAbi, API_URL } from './config.mjs';
+import { createPortaStake } from '@portastake/sdk/chain';
+import { createPayingFetch, getOffer, getSettlement, formatXusd } from '@portastake/sdk/x402';
+import { RPC, API_URL, requireKey } from './config.mjs';
 
 const url = process.argv[2] ?? `${API_URL}/api/vault-stats`;
-const account = privateKeyToAccount((await import('./config.mjs')).requireKey('PAYER_KEY'));
-const pub = createPublicClient({ chain: portaldot, transport: http(RPC) });
+const payer = privateKeyToAccount(requireKey('PAYER_KEY'));
+const ps = createPortaStake({ rpc: RPC });
 
-const bal = await pub.readContract({ address: XUSD, abi: xusdAbi, functionName: 'balanceOf', args: [account.address] });
-if (bal === 0n) {
-  console.error(`payer ${account.address} holds no xUSD. Fund it first, e.g. from a funded key:`);
-  console.error(`  cast send ${XUSD} 'faucet(uint256)' 10000000 …  then  cast send ${XUSD} 'transfer(address,uint256)' ${account.address} 10000000 …`);
+const before = (await ps.position(payer.address)).xUSD;
+if (before === 0n) {
+  console.error(`payer ${payer.address} holds no xUSD. Fund it first, e.g. \`portastake faucet 10 --asset xUSD\` from a funded key, then transfer.`);
   process.exit(1);
 }
-const before = await pub.readContract({ address: XUSD, abi: xusdAbi, functionName: 'balanceOf', args: [account.address] });
 
-// 1) show the raw 402 a plain fetch gets
-const raw = await fetch(url);
-console.log(`plain GET → ${raw.status} ${raw.statusText}`);
+// 1) what the API asks for
+const offer = await getOffer(url);
+console.log(offer ? `plain GET → 402: ${formatXusd(offer.amount)} xUSD to ${offer.payTo}` : 'plain GET → free');
 
-// 2) pay and fetch
-// Spend controls: only xUSD on Portaldot is allowed, at most MAX_PAY (default 1 xUSD) per request.
-const MAX_PAY = process.env.MAX_PAY ?? '1000000';
-const client = x402Client.fromConfig({
-  schemes: [{ network: NETWORK, client: new ExactEvmScheme(account) }],
-  spendControls: { allowedAssets: [{ network: NETWORK, asset: XUSD, maxAmountPerPayment: MAX_PAY }] },
-});
-const payFetch = wrapFetchWithPayment(fetch, client);
-const res = await payFetch(url);
+// 2) pay and fetch. Spend controls: only xUSD on Portaldot, at most MAX_PAY (default 1 xUSD) per request.
+const pay = createPayingFetch({ payer, maxPerRequest: process.env.MAX_PAY ?? '1' });
+const res = await pay(url);
 console.log(`paid GET  → ${res.status}`);
 console.log(await res.json());
+const s = getSettlement(res);
+if (s) console.log('settlement:', s);
 
-const header = res.headers.get('PAYMENT-RESPONSE') ?? res.headers.get('X-PAYMENT-RESPONSE');
-if (header) console.log('settlement:', decodePaymentResponseHeader(header));
-
-const after = await pub.readContract({ address: XUSD, abi: xusdAbi, functionName: 'balanceOf', args: [account.address] });
-console.log(`payer xUSD ${Number(before) / 1e6} → ${Number(after) / 1e6}`);
+const after = (await ps.position(payer.address)).xUSD;
+console.log(`payer xUSD ${formatXusd(before)} → ${formatXusd(after)}`);
