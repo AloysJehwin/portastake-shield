@@ -5,7 +5,7 @@ import { cryptoWaitReady, decodeAddress } from '@polkadot/util-crypto';
 import { ethers } from 'ethers';
 import { readFileSync } from 'node:fs';
 import { list, loadChains, loadHubAddresses, type Chain } from '../config.ts';
-import { DESK_ABI, providerFor, txOverrides, VAULT_ABI } from '../evm.ts';
+import { DESK_ABI, providerFor, txOverrides, VAULT_ABI, withHubLock } from '../evm.ts';
 import type { Store } from '../state.ts';
 import { decidePrice, fallbackAccountOf, h160OfAccount, NATIVE_UNIT, planBond, planSweep, quoteToPrice } from './plan.ts';
 

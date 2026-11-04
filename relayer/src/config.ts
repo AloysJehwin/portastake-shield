@@ -23,7 +23,14 @@ export type Chain = {
   logChunk: number;
 };
 
-export type BridgeDeployment = { TokenBridge: string; token: string; desk: string; deployBlock: number };
+export type BridgeDeployment = {
+  /** This chain's TokenBridge, or on a wallet-custody chain the wallet that stands in for it. */
+  TokenBridge: string;
+  token: string;
+  desk: string;
+  deployBlock: number;
+  custody?: 'wallet';
+};
 
 export function loadChains(): Chain[] {
   const file = process.env.BRIDGE_CHAINS_FILE ?? path.join(deploymentsDir, 'bridge-chains.json');

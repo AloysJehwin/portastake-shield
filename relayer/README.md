@@ -14,23 +14,23 @@ npm start -- --only=price --once
 |---|---|---|
 | `price` | 5 min | Reads the Native/7777 `assetConversion` pool and calls `SwapDesk.setPrice` when the feed is half way to stale or the pool moved 1%. Refuses jumps over 50% |
 | `staking` | 10 min | Maps the stash if needed, `sweepToStake`, `staking.bond` / `bond_extra` + `nominate`, claims each finished era, and reports rewards with `notifyReward{value}` |
-| `bridge` | 15 s | Scans `Locked` on each deployed chain, waits for finality, signs, and calls `release` on the destination. Failed deliveries back off and retry |
+| `bridge` | 15 s | Scans each chain for transfers, waits for finality, then calls `release` on spokes or pays from the relayer wallet on Portaldot, which has no bridge contract. Failed deliveries back off and retry |
 
-State lives in `.state/state.json`. Losing it is safe for the bridge (it rescans, and `processed` blocks double pays). For staking, it loses any rewards claimed but not yet reported.
+State lives in `.state/state.json`. Losing it is safe for the bridge: it rescans, spokes check `processed`, and Portaldot payouts are recognized by their on-chain tags. For staking, it loses any rewards claimed but not yet reported.
 
 ## Keys
 
 | Env | Needs |
 |---|---|
-| `RELAYER_KEY` | `RELAYER_ROLE` and `FEEDER_ROLE` on Portaldot (the deployer has both), and gas on every bridge chain |
+| `RELAYER_KEY` | `RELAYER_ROLE` and `FEEDER_ROLE` on Portaldot (the deployer has both), and gas on every bridge chain. This wallet also holds Portaldot's bridge funds, so it needs tUSD |
 | `BRIDGE_SIGNER_KEYS` | Registered with `setSigner`. Use a separate key |
 | `STASH_SURI`, or `STASH_JSON` + `STASH_PASSWORD` | The sr25519 stash, with enough tPOT for fees and the mapping deposit |
 
 ## Tests
 
 ```sh
-npm test            # sweep, bond, price and account-mapping logic
-npm run e2e:bridge  # real contracts + real relayer on three local anvil chains (run forge build first)
+npm test            # sweep, bond, price, account-mapping and calldata-tag logic
+npm run e2e:bridge  # real contracts + real relayer on three local anvil chains, with crashes mid-payout (run forge build first)
 ```
 
 **Not exercised on-chain yet:** the staking path (`mapAccount`, `bond`, `nominate`, `payoutStakersByPage`, `notifyReward`). It was only read-tested against the live node, because the stash has no funds. Watch the first real pass.
