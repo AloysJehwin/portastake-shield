@@ -20,7 +20,7 @@ const TOOLS_URL = ((import.meta.env.VITE_TOOLS_URL as string | undefined) ?? "")
 const FAUCET_AMOUNT = 10_000_000n; // 10 xUSD
 const MAX_PER_RUN = 1_000_000n; // the wallet never signs more than 1 xUSD for one run
 
-export type ToolParam = { name: string; label: string; placeholder?: string; fromWallet?: boolean };
+export type ToolParam = { name: string; label: string; placeholder?: string; fromWallet?: boolean; value?: string };
 export type Tool = {
   id: string;
   name: string;
@@ -197,7 +197,7 @@ type ToolCardProps = {
 
 export function ToolCard({ tool, balance, onPaid, walletClient, address, xusd, extra }: ToolCardProps & { extra?: ReactNode }) {
   const [params, setParams] = useState<Record<string, string>>(() =>
-    Object.fromEntries((tool.params ?? []).map((q) => [q.name, q.fromWallet && address ? address : ""])),
+    Object.fromEntries((tool.params ?? []).map((q) => [q.name, q.value ?? (q.fromWallet && address ? address : "")])),
   );
   // Fill wallet-bound inputs once a wallet connects, without overwriting what the user typed.
   useEffect(() => {

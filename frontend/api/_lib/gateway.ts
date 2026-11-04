@@ -308,6 +308,14 @@ export function createGatewayApp(env: Record<string, string | undefined> = proce
       res.status(405).json({ error: `this endpoint takes ${c.m}` });
       return;
     }
+    // A person opening the link in a browser gets the app's pay page (wallet connect, pay, see the answer)
+    // rather than a bare 402. API and x402 clients don't ask for text/html, so they still get the 402.
+    const paying = req.get("PAYMENT-SIGNATURE") || req.get("X-PAYMENT");
+    if (req.method === "GET" && !paying && (req.get("accept") ?? "").includes("text/html")) {
+      const q = new URLSearchParams(req.query as Record<string, string>).toString();
+      res.redirect(302, `/pay/${req.params.id}${q ? `?${q}` : ""}`);
+      return;
+    }
     res.locals.gateway = c;
     paywallFor(req.params.id, c)(req, res, next);
   });
