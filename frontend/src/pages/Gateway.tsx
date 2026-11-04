@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { isAddress, type Address, type WalletClient } from "viem";
 import { AlertCircle, Check, Copy, Globe, KeyRound, Loader2, Plus, Trash2 } from "lucide-react";
 import { Card, GlassCard, Section } from "../components/primitives";
+import { Select } from "../components/Select";
 import { ToolCard, type Tool } from "./Tools";
 
 const API = ((import.meta.env.VITE_TOOLS_URL as string | undefined) ?? "").replace(/\/$/, "");
@@ -155,7 +156,7 @@ export function GatewaySection(props: Props) {
             ))}
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="Name">
               <input className="input" value={name} maxLength={60} placeholder="My weather API" onChange={(e) => setName(e.target.value)} />
             </Field>
@@ -166,12 +167,19 @@ export function GatewaySection(props: Props) {
               <Field label="API URL">
                 <input className="input num text-sm" value={url} placeholder="https://api.example.com/v1/data?x=1" onChange={(e) => setUrl(e.target.value)} />
               </Field>
-              <Field label="Method">
-                <select className="input text-sm" value={method} onChange={(e) => setMethod(e.target.value as "GET" | "POST")}>
-                  <option>GET</option>
-                  <option>POST</option>
-                </select>
-              </Field>
+              <div className="min-w-0">
+                <span className="block text-xs text-fg-muted mb-1.5">Method</span>
+                <Select
+                  label="HTTP method"
+                  className="w-28"
+                  value={method}
+                  onChange={setMethod}
+                  options={[
+                    { value: "GET", label: "GET" },
+                    { value: "POST", label: "POST" },
+                  ]}
+                />
+              </div>
             </div>
             <div className="sm:col-span-2">
               <Field label="Paid to">
@@ -228,7 +236,7 @@ export function GatewaySection(props: Props) {
 
       {saved.length > 0 && (
         <Section title="Your paid endpoints">
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {saved.map((s) => (
               <ToolCard
                 key={s.id}
