@@ -6,7 +6,7 @@
 // server secret before they go into the id, so they never appear in the URL in the clear.
 //
 //   POST /api/gateway/register   { name, url, method, price, payTo, headers? } → { id, path, preview }
-//   GET  /api/gateway/inspect?id=…                                              → the public config
+//   GET  /api/gateway/inspect?gid=…                                             → the public config
 //   GET|POST /api/gateway/<id>[?_path=/sub/path&any=query]                      → 402, then the upstream answer
 //
 // Calls are only settled when the upstream answers below 400, so nobody pays for a failed call.
@@ -185,16 +185,27 @@ async function callUpstream(
   throw new Error("the upstream redirected too many times");
 }
 
+/**
+ * The caller's own query string. On Vercel, api/gateway/[id].ts merges the path segment into req.query as
+ * `id`, which clobbers a real `?id=` and would leak into the upstream call, so read the raw URL instead.
+ */
+function callerQuery(req: Request): URLSearchParams {
+  const raw = req.originalUrl ?? req.url ?? "";
+  const i = raw.indexOf("?");
+  return new URLSearchParams(i >= 0 ? raw.slice(i + 1) : "");
+}
+
 /** The upstream URL for one call: the configured URL, an optional sub-path and the caller's query. */
 function targetFor(c: GatewayConfig, req: Request): URL {
   const url = new URL(c.u);
-  const sub = typeof req.query._path === "string" ? req.query._path : "";
+  const q = callerQuery(req);
+  const sub = q.get("_path") ?? "";
   if (sub) {
     if (!sub.startsWith("/") || sub.includes("..") || sub.includes("//") || sub.length > 512) throw new Error("bad _path");
     url.pathname = url.pathname.replace(/\/$/, "") + sub;
   }
-  for (const [k, v] of Object.entries(req.query)) {
-    if (k === "_path" || typeof v !== "string") continue;
+  for (const [k, v] of q) {
+    if (k === "_path") continue;
     url.searchParams.set(k, v);
   }
   return url;
@@ -264,7 +275,8 @@ export function createGatewayApp(env: Record<string, string | undefined> = proce
 
   app.get("/api/gateway/inspect", (req, res) => {
     try {
-      res.json({ ...publicConfig(decodeId(String(req.query.id ?? ""))), live: !!key });
+      const q = callerQuery(req);
+      res.json({ ...publicConfig(decodeId(q.get("gid") ?? q.get("id") ?? "")), live: !!key });
     } catch (e) {
       res.status(400).json({ error: errText(e) });
     }
@@ -312,7 +324,7 @@ export function createGatewayApp(env: Record<string, string | undefined> = proce
     // rather than a bare 402. API and x402 clients don't ask for text/html, so they still get the 402.
     const paying = req.get("PAYMENT-SIGNATURE") || req.get("X-PAYMENT");
     if (req.method === "GET" && !paying && (req.get("accept") ?? "").includes("text/html")) {
-      const q = new URLSearchParams(req.query as Record<string, string>).toString();
+      const q = callerQuery(req).toString();
       res.redirect(302, `/pay/${req.params.id}${q ? `?${q}` : ""}`);
       return;
     }
