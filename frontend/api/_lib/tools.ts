@@ -56,6 +56,25 @@ export function createToolsApp(env: Record<string, string | undefined> = process
     res.json({ tools: TOOLS, payTo, chainId: CHAIN_ID, live: !!key });
   });
 
+  // Free: the current price only. The paid desk tool adds the fee and a deposit quote.
+  app.get("/api/tools/price", async (_req, res) => {
+    try {
+      const d = await ps.desk();
+      res.setHeader("Cache-Control", "s-maxage=30, stale-while-revalidate=60");
+      res.json({
+        pair: "tPOT/USD",
+        usdPerPot: pot(d.price),
+        fresh: d.fresh,
+        updatedAt: new Date(Number(d.updatedAt) * 1000).toISOString(),
+        maxAgeHours: Number(d.maxAge) / 3600,
+        desk: ps.addresses.SwapDesk,
+        at: new Date().toISOString(),
+      });
+    } catch {
+      res.status(502).json({ error: "Portaldot didn't answer; try again shortly" });
+    }
+  });
+
   if (!key) {
     app.use("/api/tools", (_req, res) => {
       res.status(503).json({ error: "Tools are not configured on this deployment (FACILITATOR_KEY missing)" });

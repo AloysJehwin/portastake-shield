@@ -144,14 +144,15 @@ export function releaseId(srcChainId: number, nonce: bigint): Hex {
   return keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "uint64" }], [BigInt(srcChainId), nonce]));
 }
 
-/** Must match relayer/src/bridge/tags.ts. */
-export function parseRoute(input: Hex): { dstChainId: number; to: Address; minShares: bigint } | undefined {
-  if (!input.toLowerCase().startsWith(TRANSFER_SELECTOR) || size(input) < 68 + 32) return undefined;
-  const suffix = sliceHex(input, 68);
+type Route = { dstChainId: number; to: Address; minShares: bigint };
+
+function decodeRoute(suffix: Hex, exact: boolean): Route | undefined {
+  if (size(suffix) < 32) return undefined;
   const magic = sliceHex(suffix, 0, 4).toLowerCase();
   const saving = magic === BRIDGE_SAVE;
   if (!saving && magic !== BRIDGE_OUT) return undefined;
-  if (size(suffix) !== 32 + (saving ? 32 : 0)) return undefined;
+  const length = 32 + (saving ? 32 : 0);
+  if (exact ? size(suffix) !== length : size(suffix) < length) return undefined;
   const to = getAddress(sliceHex(suffix, 12, 32));
   if (to === zeroAddress) return undefined;
   return {
@@ -159,6 +160,53 @@ export function parseRoute(input: Hex): { dstChainId: number; to: Address; minSh
     to,
     minShares: saving ? BigInt(sliceHex(suffix, 32, 64)) : 0n,
   };
+}
+
+/** Must match relayer/src/bridge/tags.ts. */
+export function parseRoute(input: Hex): Route | undefined {
+  if (!input.toLowerCase().startsWith(TRANSFER_SELECTOR) || size(input) < 68 + 32) return undefined;
+  return decodeRoute(sliceHex(input, 68), true);
+}
+
+/**
+ * The routing of a `transfer(wallet, value)` nested in a smart wallet's call (MetaMask's DelegationManager,
+ * an ERC-4337 EntryPoint). The call can appear more than once, so copies must agree on the route.
+ * Must match relayer/src/bridge/tags.ts.
+ */
+export function findNestedRoute(input: Hex, wallet: Address, value: bigint): Route | undefined {
+  const hex = input.slice(2).toLowerCase();
+  const call = TRANSFER_SELECTOR.slice(2) + wallet.slice(2).toLowerCase().padStart(64, "0") + value.toString(16).padStart(64, "0");
+  let found: Route | undefined;
+  for (let at = hex.indexOf(call); at >= 0; at = hex.indexOf(call, at + 1)) {
+    if (at % 2 !== 0) continue;
+    const start = at + call.length;
+    // The longest tag is 64 bytes; anything after it is the outer call's own data.
+    const route = decodeRoute(`0x${hex.slice(start, start + 128)}`, false);
+    if (!route) continue;
+    if (found && (found.dstChainId !== route.dstChainId || found.to !== route.to || found.minShares !== route.minShares)) {
+      return undefined;
+    }
+    found = route;
+  }
+  return found;
+}
+
+/**
+ * A direct transfer can route anywhere: its signer owns the tokens and wrote the routing. A nested one may have
+ * been written by whoever built the outer call, so it can only pay out to the account the tokens came from.
+ * Must match relayer/src/bridge/tags.ts.
+ */
+export function routeOfTransfer(
+  tx: { to: Address | null; from: Address; input: Hex },
+  token: Address,
+  wallet: Address,
+  from: Address,
+  value: bigint,
+): Route | undefined {
+  if (!tx.to) return undefined;
+  if (getAddress(tx.to) === token) return getAddress(tx.from) === from ? parseRoute(tx.input) : undefined;
+  const route = findNestedRoute(tx.input, wallet, value);
+  return route?.to === from ? route : undefined;
 }
 
 function payoutIdOf(input: Hex): Hex | undefined {
@@ -254,20 +302,25 @@ export async function claim(srcChainId: number, txHash: Hash, key: string | unde
   const tx = await pc.getTransaction({ hash: txHash });
   const wallet = getAddress(srcSide.TokenBridge);
   const token = getAddress(srcSide.token);
-  if (!tx.to || getAddress(tx.to) !== token) return { state: "invalid", message: "Not a transfer of the bridged token" };
-  const route = parseRoute(tx.input);
-  if (!route) return { state: "invalid", message: "The transfer has no bridge routing" };
-  const log = receipt.logs.find((l) => {
-    if (getAddress(l.address) !== token) return false;
+  const incoming = receipt.logs.flatMap((l) => {
+    if (getAddress(l.address) !== token) return [];
     try {
       const ev = decodeEventLog({ abi: TOKEN_ABI, data: l.data, topics: l.topics });
-      return ev.eventName === "Transfer" && getAddress(ev.args.from) === getAddress(tx.from) && getAddress(ev.args.to) === wallet;
+      if (ev.eventName !== "Transfer" || getAddress(ev.args.to) !== wallet) return [];
+      return [{ log: l, from: getAddress(ev.args.from), value: ev.args.value }];
     } catch {
-      return false;
+      return [];
     }
   });
-  if (!log) return { state: "invalid", message: "No transfer to the bridge wallet in this transaction" };
-  const amount = (decodeEventLog({ abi: TOKEN_ABI, data: log.data, topics: log.topics }).args as { value: bigint }).value;
+  if (incoming.length === 0) return { state: "invalid", message: "No transfer to the bridge wallet in this transaction" };
+  const senders = incoming.filter((t) => t.from !== wallet);
+  if (senders.length === 0) return { state: "invalid", message: "The bridge wallet can't bridge to itself. Send from another wallet" };
+  const routed = senders.flatMap((t) => {
+    const route = routeOfTransfer(tx, token, wallet, t.from, t.value);
+    return route ? [{ ...t, route }] : [];
+  });
+  if (routed.length === 0) return { state: "invalid", message: "The transfer has no bridge routing" };
+  const { log, route, value: amount } = routed[0];
 
   const dst = chainCfg(route.dstChainId);
   const dstSide = SIDES[route.dstChainId];
