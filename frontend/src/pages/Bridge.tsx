@@ -16,14 +16,13 @@ import {
 import {
   useAccount,
   useChainId,
-  usePublicClient,
   useReadContract,
   useSendTransaction,
   useSwitchChain,
   useWaitForTransactionReceipt,
   useWriteContract,
 } from "wagmi";
-import { AlertCircle, CheckCircle2, Clock, Loader2, ShieldCheck } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, ExternalLink, Loader2, ShieldCheck } from "lucide-react";
 import { addressesFor, bridgeDeployments } from "../addresses";
 import { bridgeChains, portaldot, type BridgeChain } from "../chains";
 import { applyFee, formatPot, formatUsd } from "../format";
@@ -40,12 +39,12 @@ import { WPOTAbi } from "../abi/WPOT";
 const BPS = 10_000n;
 const FAUCET_AMOUNT = 1_000_000_000n; // 1,000 tUSD
 const HISTORY_KEY = "portastake.bridge.transfers";
-// Portaldot has no bridge contract to enforce a limit, so the page keeps to the relayer's payout limit.
+// A wallet-held side has no contract to enforce a limit, so the page keeps to the relayer's payout limit.
 const WALLET_MAX_PER_TX = 10_000_000n; // 10 tUSD
-// Routing and payout tags sit after the normal calldata. Must match relayer/src/bridge/tags.ts.
+// Routing tags sit after the normal calldata. Must match relayer/src/bridge/tags.ts.
 const BRIDGE_OUT_MAGIC = "0x50534231";
-const PAYOUT_MAGIC = "50534252";
-const PAYOUT_SEARCH_BLOCKS = 5_000n;
+const BRIDGE_SAVE_MAGIC = "0x50534232";
+const API_URL = ((import.meta.env.VITE_TOOLS_URL as string | undefined) ?? "").replace(/\/$/, "");
 
 const hub = bridgeChains.find((c) => c.hub)!;
 const live = bridgeChains.filter((c) => bridgeDeployments[c.chainId]);
@@ -113,6 +112,8 @@ export function Bridge() {
   const savingIn = dstId === hub.chainId && saveIt;
 
   const token = srcDep?.token ?? zeroAddress;
+  const symbol = srcDep?.tokenSymbol ?? "tUSD";
+  const dstSymbol = dstDep?.tokenSymbol ?? "tUSD";
   const balance = useReadContract({
     chainId: srcId,
     address: token,
@@ -187,7 +188,7 @@ export function Bridge() {
           if (event.eventName !== "Transfer") continue;
           // No contract counts these on Portaldot, so a transfer's position in the chain identifies it.
           const nonce = (receipt.blockNumber << 16n) | BigInt(log.logIndex);
-          transfer = { nonce: nonce.toString(), amount: event.args.value.toString(), wantsSave: false };
+          transfer = { nonce: nonce.toString(), amount: event.args.value.toString(), wantsSave: savingIn };
         } else {
           const event = decodeEventLog({ abi: TokenBridgeAbi, data: log.data, topics: log.topics });
           if (event.eventName !== "Locked") continue;
@@ -219,13 +220,16 @@ export function Bridge() {
 
   function submit() {
     if (fromWallet) {
-      // A plain tUSD transfer to the relayer wallet, with the destination in the extra calldata.
+      // A plain token transfer to the relayer wallet, with the destination in the extra calldata.
       const transfer = encodeFunctionData({
         abi: MockStableAbi,
         functionName: "transfer",
         args: [srcDep.TokenBridge, parsed],
       });
-      const route = encodePacked(["bytes4", "uint64", "address"], [BRIDGE_OUT_MAGIC, BigInt(dstId!), user!]);
+      const route =
+        minShares > 0n
+          ? encodePacked(["bytes4", "uint64", "address", "uint256"], [BRIDGE_SAVE_MAGIC, BigInt(dstId!), user!, minShares])
+          : encodePacked(["bytes4", "uint64", "address"], [BRIDGE_OUT_MAGIC, BigInt(dstId!), user!]);
       send.sendTransaction({ to: srcDep.token, data: concatHex([transfer, route]) });
       return;
     }
@@ -242,7 +246,7 @@ export function Bridge() {
       <Section>
         <GlassCard>
           <h1 className="text-lg text-fg mb-1">Bridge</h1>
-          <Empty title="Bridge not deployed yet" hint="Run scripts/deploy-bridge.mjs, then pnpm sync-abis." />
+          <Empty title="Bridge not set up yet" hint="Run node scripts/sync-bridge.mjs to configure every chain." />
         </GlassCard>
       </Section>
     );
@@ -254,10 +258,11 @@ export function Bridge() {
         <GlassCard>
           <h1 className="text-lg text-fg mb-1">Bring money from another chain</h1>
           <p className="text-sm text-fg-muted mb-5">
-            Send tUSD to Portaldot and put it to work in one step. Your stPOT arrives in this wallet.
+            Send USDC from Base, Arbitrum, OP, Ethereum or Polygon testnets to Portaldot and put it to work in one step.
+            It arrives 1:1 as tUSD, or straight into savings as stPOT in this wallet.
           </p>
 
-          <div className="grid grid-cols-2 gap-3 mb-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
             <ChainSelect
               label="From"
               value={srcId}
@@ -276,7 +281,7 @@ export function Bridge() {
 
           <AmountInput
             label="You send"
-            symbol="tUSD"
+            symbol={symbol}
             decimals={6}
             value={amount}
             onChange={setAmount}
@@ -317,7 +322,7 @@ export function Bridge() {
                   ? quote
                     ? `~${formatPot(quote.shares)} stPOT`
                     : "—"
-                  : `${formatUsd(parsed)} tUSD`
+                  : `${formatUsd(parsed)} ${dstSymbol}`
             }
           />
           <KeyValue label="Arrives on" value={dst?.name ?? "—"} />
@@ -338,19 +343,24 @@ export function Bridge() {
             </Button>
           ) : (
             <>
-              {!src.hub && usdBalance === 0n && (
-                <TxButton
-                  label={`Get 1,000 test tUSD on ${src.name}`}
-                  address={token}
-                  abi={MockStableAbi}
-                  functionName="faucet"
-                  args={[FAUCET_AMOUNT]}
-                  onSuccess={() => balance.refetch()}
-                />
-              )}
+              {usdBalance === 0n &&
+                (srcDep?.faucet ? (
+                  <a href={srcDep.faucet} target="_blank" rel="noreferrer" className="btn-secondary w-full">
+                    Get test {symbol} on {src.name} <ExternalLink size={14} aria-hidden />
+                  </a>
+                ) : (
+                  <TxButton
+                    label={`Get 1,000 test ${symbol} on ${src.name}`}
+                    address={token}
+                    abi={MockStableAbi}
+                    functionName="faucet"
+                    args={[FAUCET_AMOUNT]}
+                    onSuccess={() => balance.refetch()}
+                  />
+                ))}
               {!fromWallet && parsed > 0n && approved < parsed ? (
                 <TxButton
-                  label="Allow the bridge to use your tUSD"
+                  label={`Allow the bridge to use your ${symbol}`}
                   address={token}
                   abi={MockStableAbi}
                   functionName="approve"
@@ -368,9 +378,9 @@ export function Bridge() {
                       {signing ? "Confirm in wallet…" : "Submitting…"}
                     </>
                   ) : savingIn ? (
-                    `Send and save ${amount || "0"} tUSD`
+                    `Send and save ${amount || "0"} ${symbol}`
                   ) : (
-                    `Send ${amount || "0"} tUSD`
+                    `Send ${amount || "0"} ${symbol}`
                   )}
                 </Button>
               )}
@@ -398,9 +408,10 @@ export function Bridge() {
       <Section title="How much to trust this">
         <Card>
           <p className="text-sm text-fg-muted">
-            This is a testnet demo. On Portaldot, your transfer is held and paid by one relayer wallet rather than a
-            contract, so you are trusting whoever runs it. Keep transfers small. A real deployment would use contracts on
-            both sides, a larger signer committee and light-client proofs.
+            This is a testnet demo. Each side of the bridge is held and paid by one relayer wallet, so you are trusting
+            whoever runs it. Every transfer and payout is tagged on-chain, so anyone can check that it was paid exactly
+            once. Keep transfers small (up to {formatUsd(WALLET_MAX_PER_TX)} USDC or tUSD each). A production version would add a
+            larger signer committee and light-client proofs.
           </p>
         </Card>
       </Section>
@@ -487,12 +498,16 @@ function useSaveQuote(
   };
 }
 
-/** Whether a transfer has landed. Other chains record this in TokenBridge; Portaldot has only the payout itself. */
+type Claim = { state: string; message?: string; payoutTx?: Hash; shares?: string };
+
+/**
+ * Whether a transfer has landed. On a wallet-held side the app asks /api/bridge/claim, which checks the
+ * transfer and pays it out if it hasn't been yet; on a TokenBridge side it reads `processed`.
+ */
 function useDelivery(t: Transfer, id: Hex) {
   const dstDep = bridgeDeployments[t.dstChainId];
   const toWallet = dstDep?.custody === "wallet";
-  const client = usePublicClient({ chainId: t.dstChainId });
-  const [payout, setPayout] = useState<{ shares: bigint }>();
+  const [claim, setClaim] = useState<Claim>();
 
   const processed = useReadContract({
     chainId: t.dstChainId,
@@ -507,55 +522,38 @@ function useDelivery(t: Transfer, id: Hex) {
   });
 
   useEffect(() => {
-    if (!toWallet || !client || !t.to || payout) return;
-    const tag = `${PAYOUT_MAGIC}${id.slice(2)}`.toLowerCase();
+    if (!toWallet || claim?.state === "delivered" || claim?.state === "invalid") return;
     let cancelled = false;
-
     const check = async () => {
-      const head = await client.getBlockNumber();
-      const floor = BigInt(dstDep.deployBlock);
-      const fromBlock = head - floor > PAYOUT_SEARCH_BLOCKS ? head - PAYOUT_SEARCH_BLOCKS : floor;
-      const hub = addressesFor(portaldot.id);
-      const [saved, paid] = await Promise.all([
-        client.getContractEvents({
-          address: hub.SwapDesk,
-          abi: SwapDeskAbi,
-          eventName: "StableDeposited",
-          args: { payer: dstDep.TokenBridge, receiver: t.to },
-          fromBlock,
-        }),
-        client.getContractEvents({
-          address: dstDep.token,
-          abi: MockStableAbi,
-          eventName: "Transfer",
-          args: { from: dstDep.TokenBridge, to: t.to },
-          fromBlock,
-        }),
-      ]);
-      for (const log of [...saved, ...paid]) {
-        const tx = await client.getTransaction({ hash: log.transactionHash });
-        if (cancelled || !tx.input.toLowerCase().endsWith(tag)) continue;
-        setPayout({ shares: "shares" in log.args ? (log.args.shares ?? 0n) : 0n });
-        return true;
+      try {
+        const r = await fetch(`${API_URL}/api/bridge/claim`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ srcChainId: t.srcChainId, txHash: t.txHash }),
+        });
+        const c = (await r.json()) as Claim;
+        if (!cancelled) setClaim(c);
+      } catch {
+        // The next pass tries again.
       }
-      return false;
     };
-
-    const timer = setInterval(() => {
-      check().then((found) => found && clearInterval(timer)).catch(() => {
-        // The RPC drops requests under load, and the next pass tries again.
-      });
-    }, 8_000);
-    check().then((found) => found && clearInterval(timer)).catch(() => {});
+    void check();
+    const timer = setInterval(check, 10_000);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [toWallet, client, t.to, id, payout, dstDep]);
+  }, [toWallet, t.srcChainId, t.txHash, claim?.state]);
 
   return toWallet
-    ? { delivered: payout !== undefined, shares: payout?.shares }
-    : { delivered: processed.data === true, shares: undefined };
+    ? {
+        delivered: claim?.state === "delivered",
+        shares: claim?.shares !== undefined ? BigInt(claim.shares) : undefined,
+        payoutTx: claim?.payoutTx,
+        message: claim?.message,
+        failed: claim?.state === "invalid",
+      }
+    : { delivered: processed.data === true, shares: undefined, payoutTx: undefined, message: undefined, failed: false };
 }
 
 function TransferRow({ transfer: t }: { transfer: Transfer }) {
@@ -572,11 +570,15 @@ function TransferRow({ transfer: t }: { transfer: Transfer }) {
       ),
     [t.srcChainId, t.nonce],
   );
-  const { delivered, shares } = useDelivery(t, id);
+  const { delivered, shares, payoutTx, message, failed } = useDelivery(t, id);
 
-  const outcome = !delivered ? (
-    <span className="inline-flex items-center gap-1.5 text-fg-muted">
-      <Clock size={14} aria-hidden /> Waiting for {srcChain?.name} to confirm
+  const outcome = failed ? (
+    <span className="inline-flex items-start gap-1.5 text-danger">
+      <AlertCircle size={14} className="mt-0.5 shrink-0" aria-hidden /> {message ?? "This transfer can't be bridged"}
+    </span>
+  ) : !delivered ? (
+    <span className="inline-flex items-start gap-1.5 text-fg-muted">
+      <Clock size={14} className="mt-0.5 shrink-0" aria-hidden /> {message ?? `Waiting for ${srcChain?.name} to confirm`}
     </span>
   ) : shares !== undefined && shares > 0n ? (
     <span className="inline-flex items-center gap-1.5 text-fg">
@@ -597,20 +599,23 @@ function TransferRow({ transfer: t }: { transfer: Transfer }) {
 
   return (
     <Card>
-      <div className="flex items-center justify-between text-sm">
-        <span className="text-fg">
-          {formatUsd(BigInt(t.amount))} tUSD · {srcChain?.name} → {dstChain?.name}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm">
+        <span className="text-fg min-w-0">
+          {formatUsd(BigInt(t.amount))} {bridgeDeployments[t.srcChainId]?.tokenSymbol ?? "tUSD"} · {srcChain?.name} →{" "}
+          {dstChain?.name}
         </span>
-        {srcChain && (
-          <a
-            href={`${srcChain.explorer}/tx/${t.txHash}`}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs text-fg-muted underline"
-          >
-            View
-          </a>
-        )}
+        <span className="flex items-center gap-3">
+          {srcChain && (
+            <a href={`${srcChain.explorer}/tx/${t.txHash}`} target="_blank" rel="noreferrer" className="text-xs text-fg-muted underline">
+              Sent
+            </a>
+          )}
+          {payoutTx && dstChain && (
+            <a href={`${dstChain.explorer}/tx/${payoutTx}`} target="_blank" rel="noreferrer" className="text-xs text-fg-muted underline">
+              Paid
+            </a>
+          )}
+        </span>
       </div>
       <div className="mt-2 text-sm">{outcome}</div>
     </Card>

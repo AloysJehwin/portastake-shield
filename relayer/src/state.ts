@@ -17,6 +17,14 @@ export type PendingRelease = {
 /** A signed Portaldot transaction, recorded before it is broadcast. */
 export type InflightTx = { raw: string; hash: string; nonce: number; id?: string };
 
+/** What one chain's relayer wallet needs to never pay twice. */
+export type WalletState = {
+  paid: Record<string, string>;
+  paidCursor?: number;
+  inflight?: InflightTx;
+  spend: { day: string; amount: string };
+};
+
 export type State = {
   /** Next source block to scan, per chain id. */
   cursors: Record<string, number>;
@@ -29,6 +37,8 @@ export type State = {
   inflight?: InflightTx;
   /** tUSD paid out by the relayer wallet on one UTC day. */
   spend: { day: string; amount: string };
+  /** The same payout bookkeeping for the relayer wallet on every other chain, by chain id. */
+  wallets?: Record<string, WalletState>;
   /** Last era whose staking payouts were claimed. */
   lastPaidEra?: number;
   /** Rewards claimed on Substrate but not yet reported to the vault, in planck. */
