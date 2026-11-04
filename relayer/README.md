@@ -18,6 +18,8 @@ The x402 facilitator, sample tool, x402 client and mandate keeper (`x402/`, `scr
 | `staking` | 10 min | Maps the stash if needed, `sweepToStake`, `staking.bond` / `bond_extra` + `nominate`, claims each finished era, and reports rewards with `notifyReward{value}` |
 | `bridge` | 15 s | Scans each chain for transfers, waits for finality, then pays from the relayer wallet on each wallet-held side (every chain today), or calls `release` on a chain with a `TokenBridge`. Failed deliveries back off and retry |
 
+The `price` job can also run without the daemon: `.github/workflows/price-feed.yml` runs it hourly, using the `RELAYER_KEY` repository secret, and can be started by hand from the Actions tab.
+
 State lives in `.state/state.json`. Losing it is safe for the bridge: it rescans, contract sides check `processed`, and wallet payouts are recognized by their on-chain tags. For staking, it loses any rewards claimed but not yet reported.
 
 ## Keys

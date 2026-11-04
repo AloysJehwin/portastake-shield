@@ -1,0 +1,40 @@
+# Keeps SwapDesk's POT price fresh. It runs the relayer's price job once an hour; the job only sends a
+# transaction when the pool moved 1% or the feed is half way to stale, so most runs cost nothing.
+# Needs the repository secret RELAYER_KEY: a key with FEEDER_ROLE and tPOT for gas.
+name: Price feed
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: price-feed
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: relayer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: relayer/package-lock.json
+      - run: npm ci
+      - name: Update the price
+        env:
+          RELAYER_KEY: ${{ secrets.RELAYER_KEY }}
+        run: |
+          if [ -z "$RELAYER_KEY" ]; then
+            echo "::error::Set the RELAYER_KEY repository secret"
+            exit 1
+          fi
+          npm start -- --only=price --once
