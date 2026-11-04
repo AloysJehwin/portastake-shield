@@ -375,7 +375,7 @@ export function Home() {
 
       <Section title="Contracts on Portaldot">
         <Card>
-          <div className="grid gap-x-8 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-8 sm:grid-cols-2">
             {CONTRACTS.filter(([key]) => isDeployed(p.addresses[key])).map(([key, label]) => (
               <div key={key} className="flex items-center justify-between gap-4 py-2">
                 <span className="text-sm text-fg-muted">{label}</span>

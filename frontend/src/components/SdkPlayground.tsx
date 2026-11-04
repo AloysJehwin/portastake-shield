@@ -163,7 +163,7 @@ export function SdkPlayground({ ops, title = "Try it with the SDK" }: { ops: Sdk
               </div>
 
               {(op.params ?? []).length > 0 && (
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {(op.params ?? []).map((q) => (
                     <label key={q.name} className="block min-w-0">
                       <span className="text-xs text-fg-muted">{q.label}</span>
