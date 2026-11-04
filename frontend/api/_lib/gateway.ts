@@ -40,7 +40,8 @@ const MAX_PRICE = 1;
 const MAX_ID = 4_000;
 const MAX_BODY = 2 * 1024 * 1024;
 const PREVIEW_BYTES = 4_096;
-const TIMEOUT_MS = 15_000;
+// Room for a slow upstream inside the function's 60 s limit, leaving ~15 s to settle the payment.
+const TIMEOUT_MS = 35_000;
 const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
 // Never forwarded from a sealed set: they'd let a caller reshape the upstream request.
 const BLOCKED_HEADERS = new Set(["host", "content-length", "connection", "transfer-encoding", "cookie"]);
@@ -342,12 +343,27 @@ export function createGatewayApp(env: Record<string, string | undefined> = proce
         res.status(502).json({ error: "the upstream answer is over 2 MB" });
         return;
       }
+      const host = new URL(c.u).host;
       // A failed upstream is answered with an error status, so the payment is not settled.
-      res.status(up.status >= 400 ? 502 : up.status).setHeader("Content-Type", up.contentType);
+      if (up.status >= 400) {
+        res.status(502).json({
+          error: `${host} answered ${up.status}. You were not charged; try again in a moment.`,
+          upstreamStatus: up.status,
+          upstream: preview({ ...up, body: up.body.subarray(0, PREVIEW_BYTES), truncated: up.body.length > PREVIEW_BYTES }).sample,
+        });
+        return;
+      }
+      res.status(up.status).setHeader("Content-Type", up.contentType);
       res.setHeader("X-Gateway-Upstream-Status", String(up.status));
       res.send(up.body);
     } catch (e) {
-      res.status(502).json({ error: `the upstream failed: ${errText(e)}` });
+      const host = new URL(c.u).host;
+      const timedOut = (e as Error)?.name === "TimeoutError" || /timeout|aborted/i.test(errText(e));
+      res.status(timedOut ? 504 : 502).json({
+        error: timedOut
+          ? `${host} didn't answer within ${TIMEOUT_MS / 1000} s. You were not charged; try again in a moment.`
+          : `Couldn't reach ${host}: ${errText(e)}. You were not charged.`,
+      });
     }
   });
 
