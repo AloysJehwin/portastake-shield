@@ -263,6 +263,12 @@ export function ToolCard({ tool, balance, onPaid, walletClient, address, xusd, e
         `${TOOLS_URL}${path}`,
         isPost ? { method: "POST", headers: { "content-type": "application/json" }, body: postBody || "{}" } : undefined,
       );
+      if (r.status === 402) {
+        // Still 402 after signing: the payment was refused or couldn't settle, so nothing was delivered or taken.
+        throw new Error(
+          "The payment couldn't be settled, so nothing was charged. The service's gas wallet may be out of tPOT; try again later.",
+        );
+      }
       if (!r.ok) {
         const detail = await r.json().then((j: { error?: string }) => j.error).catch(() => undefined);
         throw new Error(detail ?? `The tool answered ${r.status}. You were not charged.`);
