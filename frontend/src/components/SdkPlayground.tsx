@@ -130,24 +130,26 @@ export function SdkPlayground({ ops, title = "Try it with the SDK" }: { ops: Sdk
         </button>
 
         {open && (
-          <div className="border-t border-line/70 grid md:grid-cols-[minmax(0,220px)_minmax(0,1fr)]">
+          <div className="border-t border-line/70 grid md:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
             {/* Operation list: a scrolling row on phones, a sidebar from md up. */}
             <nav
               aria-label="Calls"
-              className="flex md:flex-col gap-1 p-2 overflow-x-auto md:overflow-visible border-b md:border-b-0 md:border-r border-line/70 bg-white/20"
+              className="flex md:flex-col gap-1 p-2 min-w-0 overflow-x-auto md:overflow-hidden border-b md:border-b-0 md:border-r border-line/70 bg-white/20"
             >
               {ops.map((o) => (
                 <button
                   key={o.id}
                   type="button"
                   onClick={() => setSel(o.id)}
-                  className={`shrink-0 md:shrink text-left rounded-sm px-2.5 py-2 transition-colors ${
+                  title={o.title}
+                  className={`shrink-0 md:shrink md:w-full min-w-0 text-left rounded-sm px-2.5 py-2 transition-colors ${
                     o.id === op.id ? "bg-fg text-bg" : "text-fg-muted hover:text-fg hover:bg-white/50"
                   }`}
                 >
-                  <span className="flex items-center gap-1.5">
+                  <span className="flex items-center gap-1.5 min-w-0">
                     <MethodBadge op={o} active={o.id === op.id} />
-                    <span className="num text-xs whitespace-nowrap">{o.title}</span>
+                    {/* Truncate in the sidebar so a long call never spills into the detail pane. */}
+                    <span className="num text-xs whitespace-nowrap md:truncate min-w-0">{o.title}</span>
                   </span>
                 </button>
               ))}
@@ -226,6 +228,6 @@ function MethodBadge({ op, active }: { op: SdkOp; active?: boolean }) {
   const label = op.kind === "http" ? (op.writes ? "POST" : "GET") : op.writes ? "WRITE" : "READ";
   const tone = op.writes ? "text-[#B45309] bg-[#F59E0B]/10" : "text-success bg-success/10";
   return (
-    <span className={`num text-[10px] font-semibold px-1.5 py-0.5 rounded ${active ? "bg-white/15 text-bg" : tone}`}>{label}</span>
+    <span className={`shrink-0 num text-[10px] font-semibold px-1.5 py-0.5 rounded ${active ? "bg-white/15 text-bg" : tone}`}>{label}</span>
   );
 }
