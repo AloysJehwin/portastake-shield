@@ -28,6 +28,7 @@ import { bridgeChains, portaldot, type BridgeChain } from "../chains";
 import { applyFee, formatPot, formatUsd } from "../format";
 import { AmountInput } from "../components/AmountInput";
 import { SlippageControl } from "../components/SlippageControl";
+import { Select } from "../components/Select";
 import { TxButton } from "../components/TxButton";
 import { Button, Card, Divider, Empty, GlassCard, KeyValue, Section } from "../components/primitives";
 import { MockStableAbi } from "../abi/MockStable";
@@ -431,16 +432,39 @@ function ChainSelect({
   onChange: (id: number) => void;
 }) {
   return (
-    <label className="block text-xs text-fg-muted">
+    <div className="block text-xs text-fg-muted min-w-0">
       <span className="block mb-1.5">{label}</span>
-      <select className="input w-full text-sm text-fg" value={value} onChange={(e) => onChange(Number(e.target.value))}>
-        {chains.map((c) => (
-          <option key={c.chainId} value={c.chainId}>
-            {c.name}
-          </option>
-        ))}
-      </select>
-    </label>
+      <Select
+        label={`${label} chain`}
+        value={value}
+        onChange={onChange}
+        options={chains.map((c) => ({
+          value: c.chainId,
+          label: c.name,
+          hint: bridgeDeployments[c.chainId]?.tokenSymbol,
+          icon: <ChainDot chainKey={c.key} />,
+        }))}
+      />
+    </div>
+  );
+}
+
+const CHAIN_COLORS: Record<string, string> = {
+  portaldot: "#0A0A0A",
+  "base-sepolia": "#2563EB",
+  "arbitrum-sepolia": "#28A0F0",
+  "optimism-sepolia": "#FF0420",
+  sepolia: "#8A92B2",
+  "polygon-amoy": "#8247E5",
+};
+
+function ChainDot({ chainKey }: { chainKey: string }) {
+  return (
+    <span
+      className="w-2.5 h-2.5 rounded-full shrink-0 ring-2 ring-white"
+      style={{ background: CHAIN_COLORS[chainKey] ?? "#A3A3A3" }}
+      aria-hidden
+    />
   );
 }
 

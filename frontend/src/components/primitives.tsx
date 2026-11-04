@@ -2,12 +2,12 @@ import { type ReactNode, type ButtonHTMLAttributes, forwardRef } from "react";
 
 /** Solid elevated surface — tables, forms, dense content. */
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={`card p-5 ${className}`}>{children}</div>;
+  return <div className={`card p-4 sm:p-5 min-w-0 ${className}`}>{children}</div>;
 }
 
 /** Frosted glass surface — hero cards, summary panels. */
 export function GlassCard({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={`card-glass p-6 ${className}`}>{children}</div>;
+  return <div className={`card-glass p-5 sm:p-6 min-w-0 ${className}`}>{children}</div>;
 }
 
 export function Section({
