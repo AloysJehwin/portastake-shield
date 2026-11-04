@@ -1,13 +1,14 @@
 import { useMemo, useState } from "react";
-import { maxUint256, parseUnits, type Address } from "viem";
-import { useAccount, useChainId, useReadContract, useReadContracts } from "wagmi";
-import { Pause, Play, Trash2, Repeat } from "lucide-react";
+import { maxUint256, parseUnits, type Address, type Hash } from "viem";
+import { useAccount, useChainId, usePublicClient, useReadContract, useReadContracts, useWriteContract } from "wagmi";
+import { Pause, Play, Trash2, Repeat, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { useProtocol } from "../hooks/useProtocol";
 import { useAllowance } from "../hooks/useAllowance";
 import { formatUsd } from "../format";
 import { TxButton } from "../components/TxButton";
 import { WalletGate } from "../components/WalletGate";
 import { Button, Card, Section, Empty, GlassCard, KeyValue, Divider } from "../components/primitives";
+import { TxLink } from "../components/ExplorerLink";
 import { MandateManagerAbi } from "../abi/MandateManager";
 import { MockStableAbi } from "../abi/MockStable";
 
@@ -77,6 +78,7 @@ function CreateMandate() {
     [parsed, interval],
   );
 
+  // The rule spends tUSD on every run, so it needs a standing allowance. Folded into the same click.
   const needsApproval = parsed > 0n && allowance < parsed * 24n; // enough for ~2 years of a monthly rule
 
   return (
@@ -119,28 +121,121 @@ function CreateMandate() {
         <KeyValue label="You save" value={formatUsd(parsed)} />
         <KeyValue label="Cadence" value={INTERVALS.find((i) => i.secs === interval)?.label ?? "custom"} />
 
-        <div className="mt-4 space-y-3">
-          {needsApproval && (
-            <TxButton
-              label="Approve tUSD for mandates"
-              address={p.addresses.tUSD}
-              abi={MockStableAbi}
-              functionName="approve"
-              args={[p.addresses.MandateManager, maxUint256]}
-            />
-          )}
-          <TxButton
-            label="Create save rule"
-            address={p.addresses.MandateManager}
-            abi={MandateManagerAbi}
-            functionName="create"
-            args={[params]}
-            disabled={parsed === 0n || needsApproval || !p.user}
-            onSuccess={() => p.refetch()}
+        <div className="mt-4">
+          <CreateRuleButton
+            tUSD={p.addresses.tUSD}
+            manager={p.addresses.MandateManager}
+            params={params}
+            needsApproval={needsApproval}
+            disabled={parsed === 0n || !p.user}
+            onDone={() => p.refetch()}
           />
         </div>
       </GlassCard>
     </Section>
+  );
+}
+
+type Phase = "idle" | "approving" | "creating" | "done" | "error";
+
+/**
+ * One click from nothing to a running rule: if the manager can't spend the user's tUSD yet it approves first,
+ * waits for that to land, then creates the rule. The wallet may ask twice, but the user never has to come back.
+ */
+function CreateRuleButton({
+  tUSD,
+  manager,
+  params,
+  needsApproval,
+  disabled,
+  onDone,
+}: {
+  tUSD: Address;
+  manager: Address;
+  params: Record<string, unknown>;
+  needsApproval: boolean;
+  disabled: boolean;
+  onDone: () => void;
+}) {
+  const client = usePublicClient();
+  const { writeContractAsync } = useWriteContract();
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [hash, setHash] = useState<Hash>();
+  const [error, setError] = useState<string>();
+
+  async function run() {
+    if (!client) return;
+    setError(undefined);
+    setHash(undefined);
+    try {
+      if (needsApproval) {
+        setPhase("approving");
+        const approval = await writeContractAsync({
+          address: tUSD,
+          abi: MockStableAbi,
+          functionName: "approve",
+          args: [manager, maxUint256],
+        });
+        const r = await client.waitForTransactionReceipt({ hash: approval, timeout: 180_000 });
+        if (r.status !== "success") throw new Error("The tUSD approval reverted");
+      }
+      setPhase("creating");
+      const created = await writeContractAsync({
+        address: manager,
+        abi: MandateManagerAbi,
+        functionName: "create",
+        args: [params as never],
+      });
+      setHash(created);
+      const r = await client.waitForTransactionReceipt({ hash: created, timeout: 180_000 });
+      if (r.status !== "success") throw new Error("Creating the rule reverted");
+      setPhase("done");
+      onDone();
+      setTimeout(() => setPhase("idle"), 3_000);
+    } catch (e) {
+      setPhase("error");
+      const err = e as { shortMessage?: string; message?: string };
+      setError((err.shortMessage ?? err.message ?? "Something went wrong").split("\n")[0]);
+    }
+  }
+
+  const busy = phase === "approving" || phase === "creating";
+  const steps = needsApproval ? 2 : 1;
+  return (
+    <div className="space-y-2">
+      <Button onClick={run} disabled={disabled || busy || phase === "done"} className="w-full sm:w-auto">
+        {phase === "approving" ? (
+          <>
+            <Loader2 size={14} className="animate-spin" /> Allowing tUSD (1/{steps})…
+          </>
+        ) : phase === "creating" ? (
+          <>
+            <Loader2 size={14} className="animate-spin" /> Creating rule ({steps}/{steps})…
+          </>
+        ) : phase === "done" ? (
+          <>
+            <CheckCircle2 size={14} /> Rule created
+          </>
+        ) : (
+          "Start saving"
+        )}
+      </Button>
+      {needsApproval && phase === "idle" && (
+        <p className="text-xs text-fg-subtle">Includes allowing the rule to use your tUSD. Your wallet may ask you to confirm twice.</p>
+      )}
+      {hash && (
+        <div className="flex items-center gap-2 text-xs text-fg-subtle">
+          <span>{phase === "done" ? "Confirmed" : "Submitted"}</span>
+          <TxLink hash={hash} label="View on explorer" />
+        </div>
+      )}
+      {error && (
+        <div className="flex items-start gap-2 text-xs text-danger">
+          <AlertCircle size={14} className="mt-0.5 shrink-0" aria-hidden />
+          <span className="break-words">{error}</span>
+        </div>
+      )}
+    </div>
   );
 }
 

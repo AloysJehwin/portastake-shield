@@ -1,0 +1,10 @@
+{
+  "TokenBridge": "0x2f1B730cCa78f039072Caa56B3E3Ee64319F510E",
+  "token": "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
+  "tokenSymbol": "USDC",
+  "tokenDecimals": 6,
+  "desk": "0x0000000000000000000000000000000000000000",
+  "deployBlock": 0,
+  "custody": "wallet",
+  "faucet": "https://faucet.circle.com"
+}

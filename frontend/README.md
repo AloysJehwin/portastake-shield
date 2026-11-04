@@ -20,7 +20,11 @@ Minimalist light-theme web app for PortaStake Shield, live-wired to the contract
 | `/withdraw` | Instant redeem via desk if under the hot reserve; otherwise `requestUnstake`. Lists the user's pending unstake queue. | — |
 | `/automate` | Save-on-autopilot: SAVE RECURRING mandates with pause/resume/cancel. Falls back to a muted empty state while `MandateManager` is undeployed. | MandateManager ≠ 0 (stage 4b) |
 | `/tools` | On-chain tools: vault health, desk price check, wallet report and mandate scan, each paid per run in xUSD with x402. The wallet signs; the tools (`api/tools/[name].ts`, Vercel functions) settle the payment on Portaldot through an in-process facilitator. Needs `FACILITATOR_KEY` in the Vercel env; locally run `FACILITATOR_KEY=0x… pnpm tools` next to `pnpm dev`. `/pay-per-use` redirects here. | xUSD ≠ 0 (stage 5) |
+| `/tools` (gateway) | API gateway: paste any public API, set a price and who gets paid, and get an x402 endpoint (`api/gateway/[id].ts`). The config is encoded in the endpoint id, so nothing is stored; API-key headers are sealed with `GATEWAY_SECRET`. Calls settle only when the upstream answers below 400. | FACILITATOR_KEY |
+| `/bridge` | USDC on five testnets ⇄ tUSD/stPOT on Portaldot. One transfer to the relayer wallet; `api/bridge/[action].ts` (`/api/bridge/claim`) delivers it. | BRIDGE_KEY |
 | `/activity` | Last 10,000 blocks of the user's events: `StableDeposited`, `StableRedeemed`, `UnstakeRequested`, `UnstakeFulfilled`, `SlashCovered`, `MandateExecuted`. | — |
+
+Every page has an **SDK playground** at the bottom (`components/SdkPlayground.tsx`, calls in `src/sdkOps.ts`). It runs, live, the same `@portastake/sdk` call or API request it shows; the bridge page's runs the bridge API. The GitHub and user-manual buttons sit bottom-right (`components/HelpDock.tsx`). Below 1024 px the sidebar becomes a bottom tab bar with a More menu.
 
 ## Setup
 

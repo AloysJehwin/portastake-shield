@@ -1,9 +1,26 @@
-import { type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useAccount, useChainId, useSwitchChain } from "wagmi";
-import { Home, ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, Repeat, History, Shield, Wrench } from "lucide-react";
+import { Home, ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, Repeat, History, Shield, Wrench, MoreHorizontal } from "lucide-react";
 import { portaldot, spokeChains } from "../chains";
 import { WalletButton } from "./WalletButton";
+import { HelpDock } from "./HelpDock";
+import { SdkPlayground } from "./SdkPlayground";
+import { SDK_OPS } from "../sdkOps";
+
+/** Which SDK calls each page offers in its playground. */
+const PLAYGROUND: Record<string, { ops: (typeof SDK_OPS)[keyof typeof SDK_OPS]; title?: string }> = {
+  "/": { ops: SDK_OPS.home },
+  "/deposit": { ops: SDK_OPS.deposit },
+  "/withdraw": { ops: SDK_OPS.withdraw },
+  "/automate": { ops: SDK_OPS.automate },
+  "/tools": { ops: SDK_OPS.tools, title: "Try it with the SDK and API" },
+  "/activity": { ops: SDK_OPS.activity },
+  "/bridge": { ops: SDK_OPS.bridge, title: "Try the bridge API" },
+};
+
+// The phone tab bar holds the four everyday pages; the rest live under More.
+const PRIMARY = ["/", "/deposit", "/withdraw", "/automate"];
 
 const NAV = [
   { to: "/", label: "Home", icon: Home },
@@ -45,39 +62,83 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      {/* Mobile header */}
-      <header className="lg:hidden sticky top-0 z-20 card-glass mx-3 mt-3 px-4 py-3 flex items-center justify-between">
+      {/* Mobile and tablet header */}
+      <header className="lg:hidden sticky top-0 z-20 card-glass mx-3 mt-3 px-3 sm:px-4 py-2.5 flex items-center justify-between gap-3 pt-[max(0.625rem,env(safe-area-inset-top))]">
         <Brand compact />
         <WalletButton compact />
       </header>
 
       {/* Main */}
-      <main className="flex-1 lg:ml-60">
-        <div className="mx-auto w-full max-w-content px-4 py-6 lg:py-10 pb-28 lg:pb-10">
+      <main className="flex-1 min-w-0 lg:ml-60">
+        <div className="mx-auto w-full max-w-content px-3 sm:px-6 lg:px-8 py-5 sm:py-6 lg:py-10 pb-36 lg:pb-24">
           <SpokeChainNotice />
           {children}
+          <RoutePlayground />
         </div>
       </main>
 
-      {/* Mobile bottom tab bar */}
-      <nav className="lg:hidden fixed bottom-3 inset-x-3 z-20 card-glass px-2 py-2 flex items-center justify-between">
-        {NAV.map(({ to, label, icon: Icon, ...rest }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={to === "/"}
-            className={({ isActive }) =>
-              `flex-1 min-w-0 flex flex-col items-center gap-0.5 py-1.5 rounded text-[10px] transition-colors ${
-                isActive ? "text-fg" : "text-fg-subtle"
-              }`
-            }
-          >
-            <Icon size={18} aria-hidden />
-            <span>{"short" in rest ? rest.short : label}</span>
+      <HelpDock />
+      <MobileNav />
+    </div>
+  );
+}
+
+function RoutePlayground() {
+  const { pathname } = useLocation();
+  const entry = PLAYGROUND[pathname];
+  return entry ? <SdkPlayground key={pathname} ops={entry.ops} title={entry.title} /> : null;
+}
+
+/** Bottom tab bar below lg: four everyday pages and a More sheet for the rest. */
+function MobileNav() {
+  const { pathname } = useLocation();
+  const [more, setMore] = useState(false);
+  useEffect(() => setMore(false), [pathname]);
+  const primary = NAV.filter((n) => PRIMARY.includes(n.to));
+  const secondary = NAV.filter((n) => !PRIMARY.includes(n.to));
+  const inSecondary = secondary.some((n) => n.to === pathname);
+  const tab = (active: boolean) =>
+    `flex-1 min-w-0 flex flex-col items-center gap-0.5 py-1.5 rounded text-[11px] transition-colors ${
+      active ? "text-fg" : "text-fg-subtle"
+    }`;
+
+  return (
+    <>
+      {more && (
+        <>
+          <button type="button" aria-label="Close menu" className="lg:hidden fixed inset-0 z-20" onClick={() => setMore(false)} />
+          <div className="lg:hidden fixed inset-x-3 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-30 card-glass !bg-white/85 p-2 grid gap-1">
+            {secondary.map(({ to, label, icon: Icon }) => (
+              <NavLink
+                key={to}
+                to={to}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 h-11 px-3 rounded text-sm ${isActive ? "bg-fg text-bg" : "text-fg hover:bg-white/60"}`
+                }
+              >
+                <Icon size={16} aria-hidden />
+                {label}
+              </NavLink>
+            ))}
+          </div>
+        </>
+      )}
+      <nav
+        aria-label="Main"
+        className="lg:hidden fixed bottom-[max(0.75rem,env(safe-area-inset-bottom))] inset-x-3 z-30 card-glass px-1.5 py-1.5 flex items-center justify-between sm:max-w-md sm:mx-auto"
+      >
+        {primary.map(({ to, label, icon: Icon }) => (
+          <NavLink key={to} to={to} end={to === "/"} className={({ isActive }) => tab(isActive)}>
+            <Icon size={19} aria-hidden />
+            <span className="truncate max-w-full">{label}</span>
           </NavLink>
         ))}
+        <button type="button" onClick={() => setMore((m) => !m)} aria-expanded={more} className={tab(inSecondary || more)}>
+          <MoreHorizontal size={19} aria-hidden />
+          <span>More</span>
+        </button>
       </nav>
-    </div>
+    </>
   );
 }
 

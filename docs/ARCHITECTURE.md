@@ -106,42 +106,43 @@ R < owed:  R + reserve draw → users
 
 ## Cross-chain bridge
 
-No third-party bridge is available: on 2026-11-03, LayerZero, Across and Wormhole did not list Portaldot, and the live runtime has no XCM or ISMP pallet (`beefy` is the only bridge-related one). So this is a small lock-and-release bridge the relayer runs.
+No third-party bridge is available: on 2026-11-03, LayerZero, Across and Wormhole did not list Portaldot, and the live runtime has no XCM or ISMP pallet (`beefy` is the only bridge-related one). So this is a small lock-and-release bridge run off-chain.
 
-**Portaldot has no bridge contract.** Deploying one costs ~280 tPOT and the deployer has ~44, which is kept for testing. The relayer's wallet holds Portaldot's side instead. Other chains run `TokenBridge`, whose route to Portaldot points at that wallet.
+**Every side is a wallet, not a contract.** On each chain the relayer wallet holds the bridged token: tUSD on Portaldot and Circle's testnet USDC on Base Sepolia, Arbitrum Sepolia, OP Sepolia, Ethereum Sepolia and Polygon Amoy. Setting it up sends no transactions: `node scripts/sync-bridge.mjs` writes `bridge-<chainId>.json` for every chain (`custody: "wallet"`) and copies them into the frontend and SDK. `TokenBridge` stays in the repo for a contract-backed side later; the relayer and app handle both kinds.
 
 ```
-INTO PORTALDOT
-  Spoke: TokenBridge.bridge(dst, to, amount, minShares) -> tokens locked, Locked emitted
-  Relayer waits for finality
+SPOKE -> PORTALDOT
+  Spoke: user calls USDC.transfer(wallet, amount) with routing appended to the calldata
+  App:   POST /api/bridge/claim { srcChainId, txHash } (repeats until delivered)
   Portaldot: wallet calls SwapDesk.depositWithStable(amount, minShares, to), or tUSD.transfer(to, amount)
              if the desk can't take it
 
-OUT OF PORTALDOT
-  Portaldot: user calls tUSD.transfer(wallet, amount) with routing appended to the calldata
-  Relayer waits for finality, signers sign
-  Spoke: TokenBridge.release(...)
+PORTALDOT -> SPOKE
+  Portaldot: user calls tUSD.transfer(wallet, amount) with routing appended
+  App:   POST /api/bridge/claim
+  Spoke: wallet calls USDC.transfer(to, amount)
 ```
 
-- **Routes are hub-and-spoke.** Adding a chain is one entry in `contracts/deployments/bridge-chains.json` plus a deploy run. Spoke-to-spoke goes through Portaldot in two transfers.
-- **Calldata tags.** Solidity ignores trailing calldata, so routing and payout ids are appended to ordinary calls, and stay readable on-chain. Bridge-outs carry `PSB1 + uint64 dstChainId + address to`, payouts carry `PSBR + bytes32 releaseId`. A transfer to the wallet with no valid routing is treated as inventory, and that money does not come back automatically.
-- **Double payment on Portaldot.** With no contract, nothing on-chain prevents it, so the relayer does (`relayer/src/bridge/hubWallet.ts`). A payout is signed and recorded before broadcast, and its fixed account nonce means rebroadcasting can only land it once. The relayer sends nothing while the wallet has an unconfirmed transaction. Tagged payouts rebuild the paid list from the chain if the state file is lost. The end-to-end test crashes the relayer mid-payout to check this.
-- **Limits.** The wallet refuses a payout over 10 tUSD or past 100 tUSD a day, a transaction costing over 20 tPOT, and anything leaving it under 5 tPOT. All are configurable in `relayer/.env`.
-- **Spoke side.** `TokenBridge` still enforces signatures, replay protection and a per-transfer cap.
-- **Liquidity.** Payouts come from the destination's inventory. The UI refuses a transfer larger than the far side holds. If one still comes up short, it stays pending and delivers after a top-up; there is no refund path.
-- **Trust.** One key controls Portaldot's side, and it is also the deployer with admin rights over the protocol. Whoever holds it can take the wallet's tUSD and skip or fake payouts. This is testnet-only and unaudited. Next steps are a real `TokenBridge` on Portaldot once tPOT allows, independent signers, then BEEFY light-client proofs (`beefy` is live).
-- **tUSD has an open faucet**, so this demonstrates the flow, not a real stablecoin bridge.
+- **Two ways to deliver, same rules.** The app's Vercel function `/api/bridge/claim` (`frontend/api/_lib/bridge.ts`) delivers one transfer on demand, so the bridge works with no daemon running. The long-running relayer (`relayer/src/bridge`) scans every chain and does the same. Both follow the tags below, so they can run side by side.
+- **Routes are hub-and-spoke.** Adding a chain is one entry in `contracts/deployments/bridge-chains.json` (with its `token`) plus `node scripts/sync-bridge.mjs`. Spoke-to-spoke goes through Portaldot in two transfers.
+- **Calldata tags.** Solidity ignores trailing calldata, so routing and payout ids are appended to ordinary calls, and stay readable on-chain. Bridge-outs carry `PSB1 + uint64 dstChainId + address to`, or `PSB2 + … + uint256 minShares` to save on arrival; payouts carry `PSBR + bytes32 releaseId`. A transfer to the wallet with no valid routing is treated as inventory, and that money does not come back automatically.
+- **No double payment.** Nothing on-chain prevents it, so delivery does:
+  - The claim function only pays a final, correctly tagged transfer.
+  - It first scans the destination for a payout tagged with the same release id since the transfer was sent.
+  - It refuses while the wallet has an unconfirmed transaction.
+  - It sends at the wallet's current nonce, so two racing claims can land only one payout.
+  - Claims older than 3 days are left to the relayer, whose crash-safe state (`relayer/src/bridge/hubWallet.ts`) covers them.
+- **Limits.** A payout over 10 (USDC or tUSD) is refused. So is any transaction costing over 20 tPOT on Portaldot or 0.01 ETH elsewhere, and anything leaving the wallet under its gas reserve. All of these are configurable by env.
+- **Liquidity.** Payouts come from the wallet's balance on the destination. The UI refuses a transfer larger than the far side holds; if one still comes up short, it stays queued and delivers after a top-up.
+- **Trust.** One key controls every side. Whoever holds it can take the wallet's balances and skip or fake payouts, though every payout is tagged and publicly checkable. This is testnet-only and unaudited. Next steps are independent signers, contract-backed sides, then BEEFY light-client proofs (`beefy` is live).
 
 ### Going live
 
-Nothing here sends a Portaldot transaction until a user bridges. Each spoke needs its testnet gas token for the deployer and relayer keys.
+1. `node scripts/sync-bridge.mjs` (already run; re-run after editing `bridge-chains.json`).
+2. Fund the relayer wallet on each chain: USDC from faucet.circle.com plus a little gas on spokes, tUSD and tPOT on Portaldot.
+3. Set `BRIDGE_KEY` (the relayer wallet's key) in the Vercel project. Optionally also run `cd relayer && npm start -- --only=bridge,price` with `RELAYER_KEY` set.
 
-1. `cd contracts && forge build`, then deploy to the spokes you want:
-   `PRIVATE_KEY=... BRIDGE_SIGNER=... node ../scripts/deploy-bridge.mjs base-sepolia`
-2. `cd frontend && pnpm sync-abis`.
-3. Set `RELAYER_KEY` to the deployer key and `BRIDGE_SIGNER_KEYS` in `relayer/.env`, then `cd relayer && npm start -- --only=bridge,price`.
-
-Real costs on Portaldot, as estimated by the node and possibly overstated: ~11.7 tPOT for a save to a wallet new to stPOT, ~3.9 for paying tUSD to a new wallet, ~0.02 for a price update. Test with one wallet. The desk's POT inventory caps a save (about 15 POT today), and anything larger arrives as tUSD.
+The desk's POT inventory caps a save on arrival, and anything larger arrives as tUSD.
 
 ## SDK (`sdk/`)
 

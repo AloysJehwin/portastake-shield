@@ -1,0 +1,9 @@
+{
+  "TokenBridge": "0x2f1B730cCa78f039072Caa56B3E3Ee64319F510E",
+  "token": "0xca97a63d609d3efcd510387af4891d765740861e",
+  "tokenSymbol": "tUSD",
+  "tokenDecimals": 6,
+  "desk": "0xc3439de80429265793325a6b662232043ced04b6",
+  "deployBlock": 0,
+  "custody": "wallet"
+}

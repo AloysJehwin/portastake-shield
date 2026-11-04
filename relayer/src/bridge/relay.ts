@@ -1,7 +1,8 @@
 // Watches every chain for transfers, then signs and delivers them on the destination.
 //
-// Other chains run TokenBridge. Portaldot has no bridge contract: the relayer's wallet holds its side, so
-// users bridge out by sending it tUSD with routing attached, and HubWallet pays transfers coming in.
+// A chain's side is either a TokenBridge contract or, with `custody: "wallet"`, the relayer's wallet. On a
+// wallet side users bridge out by sending the wallet the chain's token with routing attached, and HubWallet
+// pays transfers coming in.
 import { ethers } from 'ethers';
 import { list, loadBridgeDeployment, loadChains, type Chain } from '../config.ts';
 import { errorText, providerFor, safeHead, TOKEN_BRIDGE_ABI, txOverrides, withHubLock } from '../evm.ts';
@@ -11,16 +12,18 @@ import { releaseId, signRelease } from './message.ts';
 import { hubNonce, parseBridgeOut } from './tags.ts';
 
 const MAX_BACKOFF_MS = 5 * 60_000;
+// A wallet side has no deploy block. With none recorded, start this far back from the head.
+const LOOKBACK = Number(process.env.BRIDGE_LOOKBACK_BLOCKS ?? 20_000);
 const TRANSFER_ABI = ['event Transfer(address indexed from, address indexed to, uint256 value)'];
 
 type Live = {
   chain: Chain;
   provider: ethers.JsonRpcProvider;
-  /** Absent on Portaldot, where `hubWallet` stands in for it. */
+  /** Absent on a wallet-held side, where `hubWallet` stands in for it. */
   bridge?: ethers.Contract;
   hubWallet?: HubWallet;
   token: string;
-  /** The address signers bind this chain's side to: its TokenBridge, or Portaldot's wallet. */
+  /** The address signers bind this chain's side to: its TokenBridge, or the relayer wallet. */
   address: string;
   deployBlock: number;
 };
@@ -105,13 +108,13 @@ export class BridgeRelayer {
     }
   }
 
-  /** Bridge-outs from Portaldot: a tUSD transfer to the wallet, with routing after its calldata. */
+  /** Bridge-outs from a wallet side: a token transfer to the wallet, with routing after its calldata. */
   private async scanWalletIn(l: Live): Promise<void> {
     const { state } = this.store;
     const token = new ethers.Contract(l.token, TRANSFER_ABI, l.provider);
     const filter = token.filters.Transfer(null, l.address);
     const head = await safeHead(l.provider, l.chain);
-    let from = state.cursors[l.chain.chainId] ?? l.deployBlock;
+    let from = state.cursors[l.chain.chainId] ?? (l.deployBlock || Math.max(0, head - LOOKBACK));
     while (from <= head) {
       const to = Math.min(from + l.chain.logChunk - 1, head);
       for (const log of (await token.queryFilter(filter, from, to)) as ethers.EventLog[]) {
@@ -122,7 +125,7 @@ export class BridgeRelayer {
           ? parseBridgeOut(tx.data)
           : undefined;
         if (!route) {
-          this.log(`[bridge] ${l.chain.key}: ${log.transactionHash} sent the wallet ${log.args.value} tUSD with no routing, treating it as inventory`);
+          this.log(`[bridge] ${l.chain.key}: ${log.transactionHash} sent the wallet ${log.args.value} with no routing, treating it as inventory`);
           continue;
         }
         const nonce = hubNonce(log.blockNumber, log.index);
@@ -132,7 +135,8 @@ export class BridgeRelayer {
           nonce: nonce.toString(),
           to: route.to,
           amount: log.args.value.toString(),
-          minShares: '0',
+          // Only a transfer into Portaldot can be saved on arrival.
+          minShares: (this.live.get(route.dstChainId)?.chain.hub ? (route.minShares ?? 0n) : 0n).toString(),
         });
       }
       from = to + 1;
@@ -163,7 +167,7 @@ export class BridgeRelayer {
 
   private async deliverToHub(key: string, p: PendingRelease, hubWallet: HubWallet): Promise<void> {
     if (this.dryRun) {
-      this.log(`[bridge] ${key}: dry run, would pay ${p.amount} to ${p.to} on Portaldot`);
+      this.log(`[bridge] ${key}: dry run, would pay ${p.amount} to ${p.to} on ${p.dstChainId}`);
       return;
     }
     await withHubLock(() => hubWallet.deliver(key, p));
