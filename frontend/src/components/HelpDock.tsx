@@ -57,6 +57,7 @@ const MANUAL: Chapter[] = [
     body: [
       "Each tool reads PortaStake live and costs a fraction of an xUSD per run. You sign a payment; you never pay gas.",
       "API gateway: paste any public API URL, set a price and who gets paid, and you get a paid endpoint anyone can call with x402. Keys you add are sealed so they never appear in the link.",
+      "Earning: when your endpoint or tool is paid, the xUSD lands in your wallet. Press Move earnings to savings to put it to work in stPOT instead of leaving it idle.",
       "Get test xUSD with the faucet on the page.",
     ],
   },

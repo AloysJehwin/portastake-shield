@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { isAddress, type Address, type WalletClient } from "viem";
-import { AlertCircle, Check, Copy, Globe, KeyRound, Loader2, Plus, Trash2 } from "lucide-react";
+import { Link } from "react-router-dom";
+import { AlertCircle, ArrowDownToLine, Check, Copy, Globe, KeyRound, Loader2, PiggyBank, Plus, Target, Trash2, User } from "lucide-react";
+import { formatUsd } from "../format";
 import { Card, GlassCard, Section } from "../components/primitives";
 import { Select } from "../components/Select";
 import { ToolCard, type Tool } from "./Tools";
@@ -14,7 +16,6 @@ type Preview = { status: number; contentType: string; sample: unknown; truncated
 /** Public APIs that need no key, to start from. */
 const PRESETS: Array<{ label: string; name: string; url: string; method?: "GET" | "POST"; price: string }> = [
   { label: "Crypto prices", name: "Crypto prices (CoinGecko)", url: "https://api.coingecko.com/api/v3/simple/price?ids=polkadot,bitcoin,ethereum&vs_currencies=usd", price: "0.005" },
-  { label: "Weather", name: "Weather now (Open-Meteo)", url: "https://api.open-meteo.com/v1/forecast?latitude=-34.6&longitude=-58.4&current=temperature_2m,wind_speed_10m", price: "0.002" },
   { label: "FX rates", name: "USD exchange rates", url: "https://open.er-api.com/v6/latest/USD", price: "0.002" },
   { label: "Country facts", name: "Country facts", url: "https://restcountries.com/v3.1/name/argentina?fields=name,capital,population,currencies", price: "0.001" },
   { label: "JSON echo (POST)", name: "JSON echo", url: "https://httpbin.org/anything", method: "POST", price: "0.001" },
@@ -129,13 +130,49 @@ export function GatewaySection(props: Props) {
               <Globe size={16} aria-hidden />
             </span>
             <div className="min-w-0">
-              <h2 className="text-base text-fg">Turn any API into a paid endpoint</h2>
+              <span className="chip !h-6 mb-1.5">Process 1 · Earning</span>
+              <h2 className="text-base text-fg">Sell your API or tool, and save what it earns</h2>
               <p className="text-sm text-fg-muted">
-                Paste any public API, set a price per call and who gets paid. You get an x402 endpoint that any app,
-                script or AI agent can pay in xUSD on Portaldot, with no contract to deploy and no account to open.
-                Callers only pay when the API answers.
+                Paste any public API, set a price per call and who gets paid. Any app, script or AI agent can pay it in
+                xUSD on Portaldot, and callers only pay when the API answers.
               </p>
             </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+            <div className="rounded-md border border-line bg-white/50 p-3 min-w-0">
+              <div className="flex items-center gap-1.5 text-xs text-fg-muted mb-1">
+                <User size={12} aria-hidden /> Who
+              </div>
+              <p className="text-sm text-fg">Someone who registers an endpoint on the gateway or runs a paid tool.</p>
+            </div>
+            <div className="rounded-md border border-line bg-white/50 p-3 min-w-0">
+              <div className="flex items-center gap-1.5 text-xs text-fg-muted mb-1">
+                <Target size={12} aria-hidden /> Goal
+              </div>
+              <p className="text-sm text-fg">
+                Money that comes in goes straight into savings instead of sitting idle in the wallet.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-white/50 p-3 mb-5">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="inline-flex items-center justify-center w-8 h-8 rounded-sm bg-success/10 text-success shrink-0">
+                <PiggyBank size={16} aria-hidden />
+              </span>
+              <div className="min-w-0">
+                <div className="text-xs text-fg-muted">Earnings waiting in your wallet</div>
+                <div className="num text-sm text-fg">{formatUsd(props.balance)} xUSD</div>
+              </div>
+            </div>
+            <Link
+              to="/deposit?asset=xusd"
+              className={`btn-primary ${props.balance === 0n ? "pointer-events-none opacity-50" : ""}`}
+              aria-disabled={props.balance === 0n}
+            >
+              <ArrowDownToLine size={14} aria-hidden /> Move earnings to savings
+            </Link>
           </div>
 
           <div className="flex gap-2 overflow-x-auto pb-1 mb-4 -mx-1 px-1">
@@ -158,7 +195,7 @@ export function GatewaySection(props: Props) {
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="Name">
-              <input className="input" value={name} maxLength={60} placeholder="My weather API" onChange={(e) => setName(e.target.value)} />
+              <input className="input" value={name} maxLength={60} placeholder="My prices API" onChange={(e) => setName(e.target.value)} />
             </Field>
             <Field label="Price per call (xUSD)">
               <input className="input num" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value.replace(/[^0-9.]/g, ""))} />
