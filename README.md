@@ -45,6 +45,101 @@ npx portastake offer <x402 url>           # what a paid tool charges
 
 The app's on-chain tools and the relayer's facilitator, sample tool and keeper are built on it.
 
+## Architecture
+
+PortaStake Shield has five parts. Contracts on Portaldot V3 hold the money and enforce the rules. A React app is how people use it. Serverless functions in the same Vercel project sell paid tools and deliver bridge transfers. A relayer daemon runs the protocol's keeper jobs. `@portastake/sdk` packages all of it for other builders.
+
+```
+                                   ┌──────────────────────────────────────────────┐
+  Browser (wallet: MetaMask,       │  Vercel project  (frontend/, git-connected)   │
+  Rabby, WalletConnect)            │                                               │
+        │                          │  Static app: Vite + React + wagmi + viem      │
+        │  HTTPS                   │    Home · Deposit · Bridge · Withdraw ·       │
+        └─────────────────────────▶│    Automate · On-chain tools · Activity ·     │
+        │                          │    /pay/:id                                   │
+        │  signed EVM txs          │                                               │
+        │  (deposit, withdraw,     │  Functions (frontend/api/, Node, Express):    │
+        │   mandates, faucets,     │    /api/tools/*    paid tools (x402)          │
+        │   bridge-outs)           │    /api/gateway/*  any API → paid endpoint    │
+        │                          │    /api/bridge/*   deliver bridge transfers   │
+        │                          │  each paid route settles through an           │
+        │                          │  in-process x402 facilitator                  │
+        │                          └──────────┬───────────────────┬────────────────┘
+        │                                     │ reads, x402        │ bridge payouts
+        │                                     │ settlements        │ (BRIDGE_KEY)
+        ▼                                     ▼ (FACILITATOR_KEY)  ▼
+  ┌───────────────────────────────────────────────────────────────────────────────┐
+  │ Portaldot V3 EVM (pallet-revive, chain 420420777, legacy txs)                 │
+  │   StakingVault (stPOT) · SwapDesk · InsuranceFund · StabilizationReserve ·    │
+  │   OracleCommittee · PolicyNFT · MandateManager · WPOT · tUSD ·                │
+  │   xUSD (EIP-3009) · XusdGateway                                               │
+  └───────────────────────────────────────────────▲───────────────────────────────┘
+                                                  │ setPrice · execute(id) ·
+                                                  │ notifyReward · sweepToStake
+  ┌───────────────────────────────────────┐       │
+  │ Relayer daemon (relayer/, TypeScript) │───────┘
+  │   price feed · mandate keeper ·       │──────────▶ Portaldot Substrate side
+  │   sweep + bond/nominate · rewards ·   │            (staking pallet, assetConversion pool)
+  │   bridge relay · x402 facilitator     │──────────▶ Spoke chains (Base, Arbitrum, OP,
+  │ GitHub Actions also runs the price    │            Sepolia, Amoy): bridge sides
+  │ job hourly                            │
+  └───────────────────────────────────────┘
+
+  @portastake/sdk (sdk/)  ── used by the app, the functions and the relayer; published to npm for others
+```
+
+### Parts and responsibilities
+
+| Part | Where | Does | Keys it holds |
+|---|---|---|---|
+| Contracts | `contracts/src`, deployed by `scripts/deploy-cast.mjs` | Custody of every deposit, the 8% rate engine, insurance, mandates, xUSD | — |
+| Web app | `frontend/src` | Reads chain state with wagmi/viem, builds every transaction for the user's wallet to sign, runs paid tools and gateway calls with the SDK's paying `fetch` | none (the user's wallet signs) |
+| Paid tools | `frontend/api/_lib/tools.ts` | Vault health, desk price check, wallet report, mandate scan: read the chain, charge 0.01 xUSD per run | `FACILITATOR_KEY` (pays settlement gas) |
+| API gateway | `frontend/api/_lib/gateway.ts` | Turns any public HTTP API into a paid x402 endpoint. Stateless: the config is encoded in the URL, upstream API keys are sealed with AES-256-GCM, private and loopback hosts are refused, failed upstream calls are never charged | `FACILITATOR_KEY`, `GATEWAY_SECRET` (falls back to the facilitator key) |
+| Bridge delivery | `frontend/api/_lib/bridge.ts` | Checks a bridge-out on its source chain and pays it on the destination, once | `BRIDGE_KEY` (the bridge wallet) |
+| Relayer | `relayer/` | Long-running jobs the EVM can't run by itself: price feed, keeper, staking sweep and rewards, slashing reports, bridge relay | `RELAYER_KEY` (EVM), SS58 stash key |
+| SDK | `sdk/` | `@portastake/sdk/x402` (paywall, paying fetch, facilitator), `@portastake/sdk/chain` (vault, desk, mandates, keeper, explorer links, gas helpers), `portastake` CLI | none (callers pass keys) |
+| CI | `.github/workflows/price-feed.yml` | Re-feeds the SwapDesk price hourly so stablecoin deposits never hit a stale price | `RELAYER_KEY` repo secret (FEEDER_ROLE, tPOT for gas) |
+
+### Key flows
+
+**Save with stablecoins.** The wallet approves tUSD (or xUSD) and calls `SwapDesk.depositWithStable` (or `XusdGateway.depositXusd`). The desk swaps at its fed price and deposits into `StakingVault`, which mints stPOT. On the first deposit the vault also mints the soulbound `PolicyNFT`. One wallet transaction does all of this.
+
+**Withdraw.** `redeemToStable` burns stPOT, draws POT from the 10% hot reserve and pays tUSD (or xUSD through the gateway) to any address. A withdrawal larger than the hot reserve becomes `requestUnstake` and waits for the unbond.
+
+**Earn and stay covered.** The relayer reports each era's staking reward with `notifyReward`. `RateEngine` pays users the 8% target, then splits the surplus between `InsuranceFund` and `StabilizationReserve`, or tops users up from the reserve in a short era. A slash is proven N-of-M through `OracleCommittee`, and `InsuranceFund` covers it.
+
+**Automate.** `MandateManager` stores save and pay rules with caps, expiry, cooldown and slippage floors. The EVM has no scheduler, so `execute(id)` is permissionless: the relayer's keeper (`runKeeperPass` in the SDK) calls it for every due mandate, and the contract re-checks every rule before moving funds.
+
+**Pay per run (x402).**
+```
+  wallet/app                      /api/tools/x or /api/gateway/<id>           Portaldot
+     │ GET ─────────────────────────────▶│                                        │
+     │◀─ 402 + PAYMENT-REQUIRED ─────────│  price, payTo, xUSD, eip155:420420777  │
+     │ sign EIP-3009 authorization       │                                        │
+     │ (within the spend limit, no gas)  │                                        │
+     │ GET + PAYMENT-SIGNATURE ─────────▶│ facilitator.verify                     │
+     │                                   │ run the tool / call the upstream       │
+     │                                   │ response < 400 → facilitator.settle ──▶│ xUSD.transferWithAuthorization
+     │◀─ 200 + data + PAYMENT-RESPONSE ──│                                        │ payer → payTo
+```
+The payer only signs. The facilitator pays the gas, but the signature fixes the amount and recipient, so funds go straight from payer to payee. If the tool or upstream fails, nothing settles. A browser that opens a gateway link is sent to `/pay/<id>` to connect a wallet and pay there.
+
+**Bridge.** Each chain's side is the bridge wallet. A user bridges out with an ordinary token transfer to that wallet, with the route appended to the calldata. The app then calls `/api/bridge/claim`, which checks the transfer is final and has never been paid, and pays the destination (saving into stPOT on arrival when asked). Payouts are tagged with a release id so they can be audited on-chain. Details in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#cross-chain-bridge).
+
+### Configuration and addresses
+
+`contracts/deployments/<chainId>.json` is the single source of addresses. `pnpm sync-abis` in `frontend/` copies ABIs and addresses into `frontend/src` and `sdk/src`, so the app, the functions and the SDK always agree. Vercel builds `frontend/` on every merge to `main`; the server-side secrets (`FACILITATOR_KEY`, `BRIDGE_KEY`, `RELAYER_KEY`, optional `GATEWAY_SECRET`) are set with `node scripts/vercel-secrets.mjs`.
+
+### Portaldot specifics the design works around
+
+- **pallet-revive, not Frontier.** No precompile reaches the staking pallet, so the relayer bonds, nominates and reports rewards.
+- **Legacy transactions, gas charged up front.** Every write is a type-0 transaction with node-estimated gas, and an account needs about 10 tPOT to send anything. The SDK's `upfrontCost` and `balanceReport` check this before sending.
+- **Deploy cost.** About 0.0589 tPOT per byte of init code, plus about 20%, so contracts are size-trimmed (`estimateDeployCost` in the SDK).
+- **Explorer.** The explorer indexes Substrate blocks, so EVM transactions link to their block and addresses link to their SS58 account (`h160 ++ 0xEE×12`).
+
+For the protocol mechanics in depth, see [How it's wired](#how-its-wired) below and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
 ## Quickstart
 
 ```sh
