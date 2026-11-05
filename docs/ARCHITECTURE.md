@@ -106,7 +106,7 @@ R < owed:  R + reserve draw → users
 
 ## Cross-chain bridge
 
-No third-party bridge is available: on 2026-11-03, LayerZero, Across and Wormhole did not list Portaldot, and the live runtime has no XCM or ISMP pallet (`beefy` is the only bridge-related one). So this is a small lock-and-release bridge run off-chain.
+No third-party bridge is available: on 2026-11-03, LayerZero, Across and Wormhole did not list Portaldot, and the live runtime has no XCM or ISMP pallet (`beefy` is the only bridge-related one). So this is a small lock-and-release bridge whose sides are held by the relayer wallet.
 
 **Every side is a wallet, not a contract.** On each chain the relayer wallet holds the bridged token: tUSD on Portaldot and Circle's testnet USDC on Base Sepolia, Arbitrum Sepolia, OP Sepolia, Ethereum Sepolia and Polygon Amoy. Setting it up sends no transactions: `node scripts/sync-bridge.mjs` writes `bridge-<chainId>.json` for every chain (`custody: "wallet"`) and copies them into the frontend and SDK. `TokenBridge` stays in the repo for a contract-backed side later; the relayer and app handle both kinds.
 
