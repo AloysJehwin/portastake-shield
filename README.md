@@ -23,17 +23,17 @@ On the surface: deposit stablecoins, target 8% a year (in POT), automate savings
 | Relayer (`relayer/`) | 🚧 Mandate keeper and x402 facilitator done. Price feed, sweep, bond + nominate, reward reporting and the bridge relay are built; the bridge passes an end-to-end run on three local chains, while staking has only been dry-run against the live chain. ⏳ The staking daemon isn't running on testnet yet (needs a funded stash and keys). The price job also runs hourly from GitHub Actions (`.github/workflows/price-feed.yml`) |
 | Cross-chain bridge | ✅ Configured on Portaldot, Base, Arbitrum, OP, Ethereum Sepolia and Polygon Amoy with no contracts: the relayer wallet holds each side (tUSD on Portaldot, testnet USDC elsewhere), and the app's `/api/bridge/claim` function delivers transfers on demand ([details](docs/ARCHITECTURE.md#cross-chain-bridge)) |
 | API gateway | ✅ Turns any public HTTP API into a paid x402 endpoint settled in xUSD, from the On-chain tools page. Stateless: the endpoint's config lives in its URL, and API keys are sealed server-side |
-| SDK (`sdk/`) | ✅ `@portastake/sdk`: x402 paywall, payer and facilitator, plus vault, desk, mandate and keeper clients, explorer links and a `portastake` CLI ([README](sdk/README.md)) |
+| SDK (`sdk/`) | ✅ [`@portastake/sdk`](https://www.npmjs.com/package/@portastake/sdk) on npm: x402 paywall, payer and facilitator, plus vault, desk, mandate and keeper clients, explorer links and a `portastake` CLI ([README](sdk/README.md)) |
 | Frontend (`frontend/`) | ✅ Vite + React + wagmi + RainbowKit; seven pages (Home / Deposit / Bridge / Withdraw / Automate / On-chain tools / Activity), with paid tools, the API gateway and bridge delivery served by Vercel functions. Responsive from 320 px phones to wide desktops, an SDK playground on every page, one-click save rules, and GitHub and user-manual buttons in the corner |
 
 ## SDK
 
 [`@portastake/sdk`](sdk/README.md) puts the x402 payments and the protocol tooling in one npm package, so any Portaldot app can use them:
 
-It isn't on the npm registry yet, so install the packed build from this repo:
+It's published on npm as [`@portastake/sdk`](https://www.npmjs.com/package/@portastake/sdk):
 
 ```sh
-npm i ./frontend/vendor/portastake-sdk-0.1.0.tgz viem
+npm i @portastake/sdk viem
 npx portastake stats                      # live vault numbers
 npx portastake offer <x402 url>           # what a paid tool charges
 ```

@@ -6,3 +6,5 @@ allowBuilds:
   esbuild: true
   keccak: true
   utf-8-validate: true
+minimumReleaseAgeExclude:
+  - '@portastake/sdk@0.1.0'
