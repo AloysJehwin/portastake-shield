@@ -5,32 +5,77 @@
   "license": "MIT",
   "type": "module",
   "author": "Aloys Jehwin",
-  "repository": { "type": "git", "url": "git+https://github.com/AloysJehwin/portastake-shield.git", "directory": "sdk" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AloysJehwin/portastake-shield.git",
+    "directory": "sdk"
+  },
   "homepage": "https://github.com/AloysJehwin/portastake-shield/tree/main/sdk#readme",
-  "keywords": ["portaldot", "x402", "pay-per-use", "on-chain-tools", "eip-3009", "staking", "liquid-staking", "viem", "sdk"],
+  "keywords": [
+    "portaldot",
+    "x402",
+    "pay-per-use",
+    "on-chain-tools",
+    "eip-3009",
+    "staking",
+    "liquid-staking",
+    "viem",
+    "sdk"
+  ],
   "sideEffects": false,
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "import": "./dist/index.js", "require": "./dist/index.cjs" },
-    "./chain": { "import": "./dist/chain/index.js", "require": "./dist/chain/index.cjs" },
-    "./x402": { "import": "./dist/x402/index.js", "require": "./dist/x402/index.cjs" },
-    "./x402/server": { "import": "./dist/x402/server.js", "require": "./dist/x402/server.cjs" },
-    "./x402/facilitator": { "import": "./dist/x402/facilitator.js", "require": "./dist/x402/facilitator.cjs" },
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./chain": {
+      "import": "./dist/chain/index.js",
+      "require": "./dist/chain/index.cjs"
+    },
+    "./x402": {
+      "import": "./dist/x402/index.js",
+      "require": "./dist/x402/index.cjs"
+    },
+    "./x402/server": {
+      "import": "./dist/x402/server.js",
+      "require": "./dist/x402/server.cjs"
+    },
+    "./x402/facilitator": {
+      "import": "./dist/x402/facilitator.js",
+      "require": "./dist/x402/facilitator.cjs"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
     "*": {
-      "chain": ["./dist/chain/index.d.ts"],
-      "x402": ["./dist/x402/index.d.ts"],
-      "x402/server": ["./dist/x402/server.d.ts"],
-      "x402/facilitator": ["./dist/x402/facilitator.d.ts"]
+      "chain": [
+        "./dist/chain/index.d.ts"
+      ],
+      "x402": [
+        "./dist/x402/index.d.ts"
+      ],
+      "x402/server": [
+        "./dist/x402/server.d.ts"
+      ],
+      "x402/facilitator": [
+        "./dist/x402/facilitator.d.ts"
+      ]
     }
   },
-  "bin": { "portastake": "./dist/cli.js" },
-  "files": ["dist", "README.md", "LICENSE"],
-  "engines": { "node": ">=18" },
+  "bin": {
+    "portastake": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
@@ -50,7 +95,9 @@
     "viem": "^2.21.0"
   },
   "peerDependenciesMeta": {
-    "express": { "optional": true }
+    "express": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/express": "^5.0.0",

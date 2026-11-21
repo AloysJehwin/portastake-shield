@@ -6,10 +6,8 @@ Paid on-chain tools and PortaStake tooling for [Portaldot](https://portaldot.io)
 - **`@portastake/sdk/chain`**: the PortaStake Shield vault, desk and mandates, a keeper, Portaldot explorer links, and helpers for Portaldot's EVM (pallet-revive).
 - **`portastake`**: a CLI over both.
 
-It isn't on the npm registry yet. From a clone of this repo, install the packed build (use the path to your clone):
-
 ```sh
-npm i ./frontend/vendor/portastake-sdk-0.1.0.tgz viem
+npm i @portastake/sdk viem
 npm i express        # only for the paywall and the facilitator
 ```
 
